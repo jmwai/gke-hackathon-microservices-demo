@@ -92,23 +92,22 @@ func loadCatalogFromAlloyDB(catalog *pb.ListProductsResponse) error {
 	pgDatabaseName := os.Getenv("ALLOYDB_DATABASE_NAME")
 	pgTableName := os.Getenv("ALLOYDB_TABLE_NAME")
 	pgSecretName := os.Getenv("ALLOYDB_SECRET_NAME")
+	pgPrimaryIP := os.Getenv("ALLOYDB_PRIMARY_IP")
 
 	pgPassword, err := getSecretPayload(projectID, pgSecretName, "latest")
 	if err != nil {
 		return err
 	}
 
-	dialer, err := alloydbconn.NewDialer(context.Background())
-	if err != nil {
-		log.Warnf("failed to set-up dialer connection: %v", err)
-		return err
+	sslMode := "disable"
+	if pgPrimaryIP != "" {
+		// Direct private IP connections must use TLS.
+		sslMode = "require"
 	}
-	cleanup := func() error { return dialer.Close() }
-	defer cleanup()
 
 	dsn := fmt.Sprintf(
-		"user=%s password=%s dbname=%s sslmode=disable",
-		"postgres", pgPassword, pgDatabaseName,
+		"user=%s password=%s dbname=%s sslmode=%s",
+		"postgres", pgPassword, pgDatabaseName, sslMode,
 	)
 
 	config, err := pgxpool.ParseConfig(dsn)
@@ -117,9 +116,25 @@ func loadCatalogFromAlloyDB(catalog *pb.ListProductsResponse) error {
 		return err
 	}
 
-	pgInstanceURI := fmt.Sprintf("projects/%s/locations/%s/clusters/%s/instances/%s", projectID, region, pgClusterName, pgInstanceName)
-	config.ConnConfig.DialFunc = func(ctx context.Context, _ string, _ string) (net.Conn, error) {
-		return dialer.Dial(ctx, pgInstanceURI)
+	if pgPrimaryIP != "" {
+		// Use direct TCP to the private IP
+		config.ConnConfig.Host = pgPrimaryIP
+		config.ConnConfig.Port = 5432
+		log.Infof("connecting to AlloyDB via private IP %s:5432", pgPrimaryIP)
+	} else {
+		// Fallback to AlloyDB connector
+		dialer, err := alloydbconn.NewDialer(context.Background())
+		if err != nil {
+			log.Warnf("failed to set-up dialer connection: %v", err)
+			return err
+		}
+		cleanup := func() error { return dialer.Close() }
+		defer cleanup()
+
+		pgInstanceURI := fmt.Sprintf("projects/%s/locations/%s/clusters/%s/instances/%s", projectID, region, pgClusterName, pgInstanceName)
+		config.ConnConfig.DialFunc = func(ctx context.Context, _ string, _ string) (net.Conn, error) {
+			return dialer.Dial(ctx, pgInstanceURI)
+		}
 	}
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), config)
