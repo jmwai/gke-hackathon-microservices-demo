@@ -32,15 +32,15 @@ patches:
               - name: REDIS_ADDR
                 $patch: delete
               - name: ALLOYDB_PRIMARY_IP
-                value: ALLOYDB_PRIMARY_IP_VAL
+                value: 10.95.0.2
               - name: ALLOYDB_DATABASE_NAME
-                value: ALLOYDB_CARTS_DATABASE_NAME_VAL
+                value: postgres
               - name: ALLOYDB_TABLE_NAME
-                value: ALLOYDB_CARTS_TABLE_NAME_VAL
+                value: cart_items
               - name: ALLOYDB_SECRET_NAME
-                value: ALLOYDB_SECRET_NAME_VAL
+                value: alloydb-secret
               - name: PROJECT_ID
-                value: PROJECT_ID_VAL
+                value: gemini-adk-vertex-2025
 # cartservice - add the GSA annotation for the cartservice KSA
 - patch: |-
     apiVersion: v1
@@ -48,7 +48,7 @@ patches:
     metadata:
       name: cartservice
       annotations:
-        iam.gke.io/gcp-service-account: ALLOYDB_USER_GSA_ID
+        iam.gke.io/gcp-service-account: alloydb-user-sa@gemini-adk-vertex-2025.iam.gserviceaccount.com
 # productcatalogservice - replace ALLOYDB environments
 - patch: |-
     apiVersion: apps/v1
@@ -62,19 +62,21 @@ patches:
             - name: server
               env:
               - name: ALLOYDB_CLUSTER_NAME
-                value: ALLOYDB_CLUSTER_NAME_VAL
+                value: online-boutique
               - name: ALLOYDB_INSTANCE_NAME
-                value: ALLOYDB_INSTANCE_NAME_VAL
+                value: primary-instance
               - name: ALLOYDB_DATABASE_NAME
-                value: ALLOYDB_PRODUCTS_DATABASE_NAME_VAL
+                value: postgres
               - name: ALLOYDB_TABLE_NAME
-                value: ALLOYDB_PRODUCTS_TABLE_NAME_VAL
+                value: catalog_items
+              - name: ALLOYDB_PRIMARY_IP
+                value: 10.95.0.2
               - name: ALLOYDB_SECRET_NAME
-                value: ALLOYDB_SECRET_NAME_VAL
+                value: alloydb-secret
               - name: PROJECT_ID
-                value: PROJECT_ID_VAL
+                value: gemini-adk-vertex-2025
               - name: REGION
-                value: REGION_VAL
+                value: europe-west1
 # productcatalogservice - add the GSA annotation for the productcatalogservice KSA
 - patch: |-
     apiVersion: v1
@@ -82,7 +84,7 @@ patches:
     metadata:
       name: productcatalogservice
       annotations:
-        iam.gke.io/gcp-service-account: ALLOYDB_USER_GSA_ID
+        iam.gke.io/gcp-service-account: alloydb-user-sa@gemini-adk-vertex-2025.iam.gserviceaccount.com
 # redis - remove the redis-cart Deployment
 - patch: |-
     apiVersion: apps/v1
