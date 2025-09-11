@@ -1,112 +1,154 @@
 {
-    "products": [
-        {
-            "id": "OLJCESPC7Z",
-            "name": "Sunglasses",
-            "description": "Add a modern touch to your outfits with these sleek aviator sunglasses.",
-            "picture": "/static/img/products/sunglasses.jpg",
-            "priceUsd": {
-                "currencyCode": "USD",
-                "units": 19,
-                "nanos": 990000000
-            },
-            "categories": ["accessories"]
-        },
-        {
-            "id": "66VCHSJNUP",
-            "name": "Tank Top",
-            "description": "Perfectly cropped cotton tank, with a scooped neckline.",
-            "picture": "/static/img/products/tank-top.jpg",
-            "priceUsd": {
-                "currencyCode": "USD",
-                "units": 18,
-                "nanos": 990000000
-            },
-            "categories": ["clothing", "tops"]
-        },
-        {
-            "id": "1YMWWN1N4O",
-            "name": "Watch",
-            "description": "This gold-tone stainless steel watch will work with most of your outfits.",
-            "picture": "/static/img/products/watch.jpg",
-            "priceUsd": {
-                "currencyCode": "USD",
-                "units": 109,
-                "nanos": 990000000
-            },
-            "categories": ["accessories"]
-        },
-        {
-            "id": "L9ECAV7KIM",
-            "name": "Loafers",
-            "description": "A neat addition to your summer wardrobe.",
-            "picture": "/static/img/products/loafers.jpg",
-            "priceUsd": {
-                "currencyCode": "USD",
-                "units": 89,
-                "nanos": 990000000
-            },
-            "categories": ["footwear"]
-        },
-        {
-            "id": "2ZYFJ3GM2N",
-            "name": "Hairdryer",
-            "description": "This lightweight hairdryer has 3 heat and speed settings. It's perfect for travel.",
-            "picture": "/static/img/products/hairdryer.jpg",
-            "priceUsd": {
-                "currencyCode": "USD",
-                "units": 24,
-                "nanos": 990000000
-            },
-            "categories": ["hair", "beauty"]
-        },
-        {
-            "id": "0PUK6V6EV0",
-            "name": "Candle Holder",
-            "description": "This small but intricate candle holder is an excellent gift.",
-            "picture": "/static/img/products/candle-holder.jpg",
-            "priceUsd": {
-                "currencyCode": "USD",
-                "units": 18,
-                "nanos": 990000000
-            },
-            "categories": ["decor", "home"]
-        },
-        {
-            "id": "LS4PSXUNUM",
-            "name": "Salt & Pepper Shakers",
-            "description": "Add some flavor to your kitchen.",
-            "picture": "/static/img/products/salt-and-pepper-shakers.jpg",
-            "priceUsd": {
-                "currencyCode": "USD",
-                "units": 18,
-                "nanos": 490000000
-            },
-            "categories": ["kitchen"]
-        },
-        {
-            "id": "9SIQT8TOJO",
-            "name": "Bamboo Glass Jar",
-            "description": "This bamboo glass jar can hold 57 oz (1.7 l) and is perfect for any kitchen.",
-            "picture": "/static/img/products/bamboo-glass-jar.jpg",
-            "priceUsd": {
-                "currencyCode": "USD",
-                "units": 5,
-                "nanos": 490000000
-            },
-            "categories": ["kitchen"]
-        },
-        {
-            "id": "6E92ZMYYFZ",
-            "name": "Mug",
-            "description": "A simple mug with a mustard interior.",
-            "picture": "/static/img/products/mug.jpg",
-            "priceUsd": {
-                "currencyCode": "USD",
-                "units": 8,
-                "nanos": 990000000
-            },
-            "categories": ["kitchen"]
-        }
-    ]
+  "products": [
+    {
+      "id": "TKPFCZ9EA7H5FYZH",
+      "name": "Solid Men Multicolor Track Pants",
+      "description": "Solid Men Multicolor Track Pants. Yorker trackpants made from 100% rich combed cotton giving it a rich look.Designed for Comfort,Skin friendly fabric,itch-free waistband & great for all year round use Proudly made in India",
+      "picture": "/static/img/products/solid-men-multicolor-track-pants.jpg",
+      "priceUsd": {
+        "currencyCode": "USD",
+        "units": 10,
+        "nanos": 465909091
+      },
+      "categories": [
+        "clothing and accessories",
+        "bottomwear"
+      ]
+    },
+    {
+      "id": "TKPFCZ9EJZV2UVRZ",
+      "name": "Solid Men Blue Track Pants",
+      "description": "Solid Men Blue Track Pants. Yorker trackpants made from 100% rich combed cotton giving it a rich look.Designed for Comfort,Skin friendly fabric,itch-free waistband & great for all year round use Proudly made in India",
+      "picture": "/static/img/products/solid-men-blue-track-pants.jpg",
+      "priceUsd": {
+        "currencyCode": "USD",
+        "units": 5,
+        "nanos": 670454545
+      },
+      "categories": [
+        "clothing and accessories",
+        "bottomwear"
+      ]
+    },
+    {
+      "id": "SOCFVCCYUDEN2AVH",
+      "name": "Men Self Design Ankle Length  (Pack of 4)",
+      "description": "Men Self Design Ankle Length  (Pack of 4). These men's socks from Acort house give comfort to your feet while on the move. The heavy cushion embedded in these socks keeps your feet comfortable and relaxed all day. All our cotton socks are knitted using the most advanced and cutting edge machines, ensuring that every sock is well crafted and comfortable. These socks are made of 80% combed cotton, which ensures that the socks are soft and breathable so that your feet remain comfortable and fresh all day long. They are 40% thicker and heavier than regular socks and are able to absorb sweat better, making them ideal for sports, athletic and casual activities. The inbuilt mesh ventilation layer improves air flow and breathability for enhanced comfort. The socks are available in a pack of 4 and come in Beige, Grey, Blue and black colours.",
+      "picture": "/static/img/products/men-self-design-ankle-length-pack-of-4.jpg",
+      "priceUsd": {
+        "currencyCode": "USD",
+        "units": 3,
+        "nanos": 181818182
+      },
+      "categories": [
+        "clothing and accessories",
+        "clothing accessories"
+      ]
+    },
+    {
+      "id": "CTPFVZTEMJWEJJJV",
+      "name": "nu-Lite Satin Tie & Cufflink  (Red)",
+      "description": "nu-Lite Satin Tie & Cufflink  (Red). Provides you nu-Lite men Necktie, Pocket Square, Cufflink. The tie is often the centerpiece of the dress, it's important to choose your tie wisely. These fashion accessory kits are a way to step up your wardrobe and make the perfect gift (even if it's for yourself). Either it is or a formal occasion, our classy accessory set will never fail to add that touch of class to your personality. You can wear this for long hours without any discomfort. The tie has sophisticated design and colour. Comes with elegant primary packing, great choice for gifting purpose. Each set comes with:",
+      "picture": "/static/img/products/nu-lite-satin-tie-cufflink-red.jpg",
+      "priceUsd": {
+        "currencyCode": "USD",
+        "units": 5,
+        "nanos": 670454545
+      },
+      "categories": [
+        "clothing and accessories",
+        "clothing accessories"
+      ]
+    },
+    {
+      "id": "SWTFYHNFFQMQ5PHC",
+      "name": "Striped Collared Neck Casual Men Grey, Black Sweater",
+      "description": "Striped Collared Neck Casual Men Grey, Black Sweater. MANRA present you stylish wollen ponchos, shawls,Cardgan, Pullovers which can be wear in any occasions(party ,work,festival etc).Stay warm and look stylish this winter         in our new collection of woolen poncho  for you. All the designs are specially crafted. PONCHO IS A SOFT 'FINE KNIT WITH A NECK LACE AND OPEN SIDES.          Made from the fine quality of acrylic wool,it gives you a cozy and soft  feel all day  long .IT is a free size garment fits from medium to xxl size .",
+      "picture": "/static/img/products/striped-collared-neck-casual-men-grey-black-sweater.jpg",
+      "priceUsd": {
+        "currencyCode": "USD",
+        "units": 4,
+        "nanos": 534090909
+      },
+      "categories": [
+        "clothing and accessories",
+        "winter wear"
+      ]
+    },
+    {
+      "id": "SWTFYGREMHZAR3AG",
+      "name": "Striped V Neck Casual Men Maroon Sweater",
+      "description": "Striped V Neck Casual Men Maroon Sweater. MANRA present you stylish wollen ponchos, shawls,Cardgan, Pullovers which can be wear in any occasions(party ,work,festival etc).Stay warm and look stylish this winter         in our new collection of woolen poncho  for you. All the designs are specially crafted. PONCHO IS A SOFT 'FINE KNIT WITH A NECK LACE AND OPEN SIDES.          Made from the fine quality of acrylic wool,it gives you a cozy and soft  feel all day  long .IT is a free size garment fits from medium to xxl size .",
+      "picture": "/static/img/products/striped-v-neck-casual-men-maroon-sweater.jpg",
+      "priceUsd": {
+        "currencyCode": "USD",
+        "units": 5,
+        "nanos": 272727273
+      },
+      "categories": [
+        "clothing and accessories",
+        "winter wear"
+      ]
+    },
+    {
+      "id": "TSHFWSZJQSCYKUJJ",
+      "name": "Self Design Men Polo Neck Black T-Shirt",
+      "description": "Self Design Men Polo Neck Black T-Shirt. Good quality product",
+      "picture": "/static/img/products/self-design-men-polo-neck-black-t-shirt.jpg",
+      "priceUsd": {
+        "currencyCode": "USD",
+        "units": 3,
+        "nanos": 375000000
+      },
+      "categories": [
+        "clothing and accessories",
+        "topwear"
+      ]
+    },
+    {
+      "id": "TSHFWSZJUQSDZZHG",
+      "name": "Self Design Men Polo Neck Dark Blue T-Shirt",
+      "description": "Self Design Men Polo Neck Dark Blue T-Shirt. Good quality product",
+      "picture": "/static/img/products/self-design-men-polo-neck-dark-blue-t-shirt.jpg",
+      "priceUsd": {
+        "currencyCode": "USD",
+        "units": 3,
+        "nanos": 375000000
+      },
+      "categories": [
+        "clothing and accessories",
+        "topwear"
+      ]
+    },
+    {
+      "id": "VESFHYSYHZ8HUDMY",
+      "name": "SayItLoud Men Vest",
+      "description": "SayItLoud Men Vest. Stay relaxed during your rigorous training sessions wearing this cotton vest.100% combed cotton provides ideal comfort for your skin while a round neck proves ideal for T-shirts and shirts. Wear this sleeveless vest from Say It Loud under your top layer to give your torso a fine finish and strong hold on our muscles. It assures excellent freedom of movement.Featuring slim fit, this vest will be a great addition to your wardrobe.",
+      "picture": "/static/img/products/sayitloud-men-vest.jpg",
+      "priceUsd": {
+        "currencyCode": "USD",
+        "units": 3,
+        "nanos": 397727273
+      },
+      "categories": [
+        "clothing and accessories",
+        "innerwear and swimwear"
+      ]
+    },
+    {
+      "id": "VESFHYSZDTB2NGK3",
+      "name": "SayItLoud Men Vest",
+      "description": "SayItLoud Men Vest. Stay relaxed during your rigorous training sessions wearing this cotton vest.100% combed cotton provides ideal comfort for your skin while a round neck proves ideal for T-shirts and shirts. Wear this sleeveless vest from Say It Loud under your top layer to give your torso a fine finish and strong hold on our muscles. It assures excellent freedom of movement.Featuring slim fit, this vest will be a great addition to your wardrobe.",
+      "picture": "/static/img/products/sayitloud-men-vest.jpg",
+      "priceUsd": {
+        "currencyCode": "USD",
+        "units": 2,
+        "nanos": 545454545
+      },
+      "categories": [
+        "clothing and accessories",
+        "innerwear and swimwear"
+      ]
+    }
+  ]
 }
