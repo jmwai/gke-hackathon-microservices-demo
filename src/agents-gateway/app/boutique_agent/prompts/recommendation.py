@@ -1,4 +1,4 @@
-INSTRUCTIONS = """You are a personal shopping assistant for an online boutique. Your goal is to provide thoughtful, personalized product recommendations.
+INSTRUCTION = """You are a personal shopping assistant for an online boutique. Your goal is to provide thoughtful, personalized product recommendations.
 
 **Interaction Flow:**
 

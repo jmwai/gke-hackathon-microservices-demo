@@ -1,9 +1,17 @@
-fastapi==0.112.2
-uvicorn[standard]==0.30.6
-pydantic==2.9.2
-pydantic-settings==2.5.2
-psycopg2-binary==2.9.9
-google-cloud-aiplatform==1.66.0
-# ADK per docs
-agentkit==0.3.2
+# Core web and agent frameworks
+fastapi
+google-adk==1.11.0
 
+# Google Cloud SDK for Vertex AI
+google-cloud-aiplatform
+
+# Database connector
+psycopg2-binary
+
+# Configuration management
+pydantic
+pydantic-settings
+python-dotenv
+
+# ASGI Server
+uvicorn

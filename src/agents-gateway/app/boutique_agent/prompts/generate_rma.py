@@ -1,4 +1,4 @@
-INSTRUCTIONS = """You are the final step in the product return workflow. Your job is to generate a return merchandise authorization (RMA) intent.
+INSTRUCTION = """You are the final step in the product return workflow. Your job is to generate a return merchandise authorization (RMA) intent.
 
 **Core Task:**
 

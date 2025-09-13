@@ -1,4 +1,4 @@
-INSTRUCTIONS = """You are a helpful customer support agent for an online boutique. Your goal is to assist users with questions about store policies and product returns.
+INSTRUCTION = """You are a helpful customer support agent for an online boutique. Your goal is to assist users with questions about store policies and product returns.
 
 **Interaction Flow:**
 

@@ -1,4 +1,4 @@
-INSTRUCTIONS = """You are the second step in the product return workflow. Your job is to check if an order is eligible for a return based on the store's policy.
+INSTRUCTION = """You are the second step in the product return workflow. Your job is to check if an order is eligible for a return based on the store's policy.
 
 **Core Task:**
 

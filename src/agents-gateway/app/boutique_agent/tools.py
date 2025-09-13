@@ -5,8 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
-from .config import get_settings
-from .db import get_conn, put_conn, vector_literal
+from app.config import get_settings
+from app.db import get_conn, put_conn, vector_literal
 from google.adk.tools import FunctionTool
 
 
@@ -98,7 +98,8 @@ def text_vector_search(query: str, filters: Optional[Dict[str, Any]], top_k: int
     vec = _embed_text_1408(query)
     qvec = vector_literal(vec)
     where = []
-    params: List[Any] = []
+    # Start params list with the vector, which is now parameterized
+    params: List[Any] = [qvec]
     if filters:
         cat = filters.get("category") if isinstance(filters, dict) else None
         if cat:
@@ -107,7 +108,7 @@ def text_vector_search(query: str, filters: Optional[Dict[str, Any]], top_k: int
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     sql = (
         "SELECT id, name, description, picture, COALESCE(product_image_url, picture) as product_image_url, "
-        f"(product_embedding <=> {qvec}::vector) AS distance "
+        "(product_embedding <=> %s::vector) AS distance "  # Use %s placeholder
         "FROM catalog_items"
         + where_sql +
         " ORDER BY distance ASC LIMIT %s"
@@ -121,13 +122,13 @@ def text_vector_search(query: str, filters: Optional[Dict[str, Any]], top_k: int
             out = []
             for r in cur.fetchall():
                 out.append({
-                    "product": {
-                        "id": r[0], "name": r[1], "description": r[2],
-                        "picture": r[3], "product_image_url": r[4]
-                    },
+                    "id": r[0],
+                    "name": r[1],
+                    "picture": r[3],
+                    "product_image_url": r[4],
                     "distance": float(r[5]),
-                    "why": None,
                 })
+            print(out)
             return out
     finally:
         put_conn(conn)
@@ -146,7 +147,8 @@ def image_vector_search(image_bytes: bytes, filters: Optional[Dict[str, Any]], t
     vec = _embed_image_1408_from_bytes(image_bytes)
     qvec = vector_literal(vec)
     where = []
-    params: List[Any] = []
+    # Start params list with the vector, which is now parameterized
+    params: List[Any] = [qvec]
     if filters:
         cat = filters.get("category") if isinstance(filters, dict) else None
         if cat:
@@ -155,7 +157,7 @@ def image_vector_search(image_bytes: bytes, filters: Optional[Dict[str, Any]], t
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     sql = (
         "SELECT id, name, description, picture, COALESCE(product_image_url, picture) as product_image_url, "
-        f"(product_image_embedding <=> {qvec}::vector) AS distance "
+        "(product_image_embedding <=> %s::vector) AS distance "  # Use %s placeholder
         "FROM catalog_items"
         + where_sql +
         " ORDER BY distance ASC LIMIT %s"
@@ -169,12 +171,11 @@ def image_vector_search(image_bytes: bytes, filters: Optional[Dict[str, Any]], t
             out = []
             for r in cur.fetchall():
                 out.append({
-                    "product": {
-                        "id": r[0], "name": r[1], "description": r[2],
-                        "picture": r[3], "product_image_url": r[4]
-                    },
+                    "id": r[0],
+                    "name": r[1],
+                    "picture": r[3],
+                    "product_image_url": r[4],
                     "distance": float(r[5]),
-                    "why": None,
                 })
             return out
     finally:
@@ -244,31 +245,25 @@ def draft_return_intent(order_id: str, items: List[str], reason: str) -> Dict[st
 
 # ADK FunctionTool wrappers
 text_search_tool = FunctionTool(
-    fn=text_vector_search,
-    description="Performs semantic text search over catalog products to find items based on a description.",
+    text_vector_search,
 )
 
 image_search_tool = FunctionTool(
-    fn=image_vector_search,
-    description="Performs visual similarity search to find products that look like a given image.",
+    image_vector_search,
 )
 
 user_context_tool = FunctionTool(
-    fn=get_user_context,
-    description="Gets user preferences and context to help with recommendations.",
+    get_user_context,
 )
 
 support_kb_tool = FunctionTool(
-    fn=search_policy_kb,
-    description="Searches the knowledge base for answers to policy questions.",
+    search_policy_kb,
 )
 
 order_details_tool = FunctionTool(
-    fn=get_order_details,
-    description="Retrieves the details of a customer's order.",
+    get_order_details,
 )
 
 draft_return_tool = FunctionTool(
-    fn=draft_return_intent,
-    description="Creates a structured intent for processing a product return.",
+    draft_return_intent,
 )

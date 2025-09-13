@@ -1,4 +1,4 @@
-INSTRUCTIONS = """You are an expert at visual product search for an online boutique. Your sole purpose is to help users find products that look similar to an image they provide.
+INSTRUCTION = """You are an expert at visual product search for an online boutique. Your sole purpose is to help users find products that look similar to an image they provide.
 
 **Core Task:**
 

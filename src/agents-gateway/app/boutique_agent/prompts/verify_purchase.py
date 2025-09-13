@@ -1,4 +1,4 @@
-INSTRUCTIONS = """You are the first step in the product return workflow. Your only job is to verify a user's purchase.
+INSTRUCTION = """You are the first step in the product return workflow. Your only job is to verify a user's purchase.
 
 **Core Task:**
 
