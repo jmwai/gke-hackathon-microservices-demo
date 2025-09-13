@@ -2,27 +2,35 @@ from __future__ import annotations
 from google.adk.agents import LlmAgent, SequentialAgent
 from google.adk.tools import AgentTool
 # from .callbacks import LoggingCallbackHandler, ModerationCallbackHandler
-from .tools import (
-    text_search_tool,
-    image_search_tool,
-    user_context_tool,
-    support_kb_tool,
-    order_details_tool,
-    draft_return_tool,
-)
+
 from .prompts import (
     boutique_host,
-    product_discovery,
-    image_search,
-    recommendation,
-    customer_support,
-    verify_purchase,
     check_return_eligibility,
+    customer_support,
     generate_rma,
+    image_search,
+    product_discovery,
+    recommendation,
+    verify_purchase,
+    add_to_cart,
+    confirm_cart,
+    submit_order,
+)
+from .tools import (
+    initiate_return_tool,
+    image_search_tool,
+    order_details_tool,
+    support_kb_tool,
+    text_search_tool,
+    user_context_tool,
+    add_to_cart_tool,
+    track_shipment_tool,
+    check_return_eligibility_tool,
+    get_cart_details_tool,
+    place_order_tool,
 )
 
-# Global model configuration
-GEMINI_MODEL = "gemini-2.5-pro"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # Instantiate the callback handlers
 # logging_callback = LoggingCallbackHandler()
@@ -50,6 +58,15 @@ image_search_agent = LlmAgent(
     # callbacks=[logging_callback],
 )
 
+# New specialist agent for adding items to the cart
+add_to_cart_agent = LlmAgent(
+    instruction=add_to_cart.INSTRUCTION,
+    name="add_to_cart_agent",
+    description="Adds one or more specified items to the user's shopping cart.",
+    model=GEMINI_MODEL,
+    tools=[add_to_cart_tool],
+)
+
 # Recommendation Agent (ADK LlmAgent)
 # Provides personalized product recommendations.
 recommendation_agent = LlmAgent(
@@ -72,56 +89,67 @@ verify_purchase_agent = LlmAgent(
 )
 
 check_return_eligibility_agent = LlmAgent(
-    name="check_return_eligibility_agent",
-    description="Second step in the returns workflow. Checks if an order is eligible for return based on store policy.",
     instruction=check_return_eligibility.INSTRUCTION,
+    name="check_return_eligibility_agent",
+    description="Checks if an item is eligible for return based on store policy.",
     model=GEMINI_MODEL,
-    tools=[support_kb_tool],
-    # callbacks=[logging_callback],
+    tools=[check_return_eligibility_tool],
 )
 
 generate_rma_agent = LlmAgent(
-    name="generate_rma_agent",
-    description="Final step in the returns workflow. Generates a return merchandise authorization (RMA) intent.",
     instruction=generate_rma.INSTRUCTION,
+    name="generate_rma_agent",
+    description="Generates a Return Merchandise Authorization (RMA) and shipping label.",
     model=GEMINI_MODEL,
-    tools=[draft_return_tool],
-    # callbacks=[logging_callback],
+    tools=[initiate_return_tool],
 )
 
 returns_workflow_agent = SequentialAgent(
     name="returns_workflow_agent",
-    description="""
-    Handles the end-to-end process for product returns in a deterministic sequence.
-    1. Invoke the verify_purchase_agent to confirm the user's order details.
-    2. Invoke the check_return_eligibility_agent to ensure the order can be returned.
-    3. Invoke the generate_rma_agent to create the final return intent.
-    """,
+    description="A sequential workflow for processing customer returns.",
     sub_agents=[
         verify_purchase_agent,
         check_return_eligibility_agent,
         generate_rma_agent,
     ],
-    # callbacks=[logging_callback],
 )
 
-# Customer Support Agent (LlmAgent)
 customer_support_agent = LlmAgent(
-    name="customer_support_agent",
-    description="""
-    Acts as a customer support sub-router.
-    1. Answers general policy questions using the knowledge base.
-    2. Invokes the returns_workflow_agent for any requests to process a product return.
-    """,
-    model=GEMINI_MODEL,
     instruction=customer_support.INSTRUCTION,
+    name="customer_support_agent",
+    description="Handles customer support inquiries, including order status, returns, and policy questions.",
+    model=GEMINI_MODEL,
     tools=[
+        order_details_tool,
         support_kb_tool,
-        AgentTool(
-            agent=returns_workflow_agent,
-        ),
+        track_shipment_tool,
+        AgentTool(returns_workflow_agent),
     ],
-    # callbacks=[logging_callback],
+)
+
+confirm_cart_agent = LlmAgent(
+    instruction=confirm_cart.INSTRUCTION,
+    name="confirm_cart_agent",
+    description="Confirms the final cart details with the user before payment.",
+    model=GEMINI_MODEL,
+    tools=[get_cart_details_tool],
+)
+
+submit_order_agent = LlmAgent(
+    instruction=submit_order.INSTRUCTION,
+    name="submit_order_agent",
+    description="Collects final details and places the order.",
+    model=GEMINI_MODEL,
+    tools=[place_order_tool],
+)
+
+checkout_agent = SequentialAgent(
+    name="checkout_agent",
+    description="Guides the user through the checkout process.",
+    sub_agents=[
+        confirm_cart_agent,
+        submit_order_agent,
+    ],
 )
 
 # Boutique Host Agent (Router)
@@ -138,18 +166,12 @@ root_agent = LlmAgent(
     model=GEMINI_MODEL,
     instruction=boutique_host.INSTRUCTION,
     tools=[
-        AgentTool(
-            agent=product_discovery_agent,
-        ),
-        AgentTool(
-            agent=image_search_agent,
-        ),
-        AgentTool(
-            agent=recommendation_agent,
-        ),
-        AgentTool(
-            agent=customer_support_agent,
-        ),
+        AgentTool(image_search_agent),
+        AgentTool(recommendation_agent),
+        AgentTool(customer_support_agent),
+        AgentTool(product_discovery_agent),
+        AgentTool(add_to_cart_agent),
+        AgentTool(checkout_agent),
     ],
     # callbacks=[moderation_callback, logging_callback],
 )

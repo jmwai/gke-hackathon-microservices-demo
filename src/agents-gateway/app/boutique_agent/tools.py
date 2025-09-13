@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 from typing import Any, Dict, List, Optional
+import requests
 
 from fastapi import HTTPException
 
@@ -227,20 +228,131 @@ def get_order_details(order_id: str, email: str) -> Dict[str, Any]:
         "order_id": order_id,
         "status": "shipped",
         "items": [{"id": "OLJ-001", "name": "Vintage Sunglasses", "quantity": 1}],
+        "tracking_id": "1Z999AA10123456784",
     }
 
 
-def draft_return_intent(order_id: str, items: List[str], reason: str) -> Dict[str, Any]:
+def track_shipment(tracking_id: str) -> Dict[str, Any]:
     """
-    Creates a structured intent for the frontend to process a return.
+    Gets the real-time shipping status and estimated delivery date for a given tracking ID.
+    Args:
+        tracking_id: The unique identifier for the shipment.
+    Returns:
+        A dictionary with the latest shipping status.
+    """
+    # This is a stub. A real implementation would call a shipping carrier API.
+    print(f"Tracking ID received: {tracking_id}")
+    return {
+        "tracking_id": tracking_id,
+        "status": "in_transit",
+        "estimated_delivery_date": "2025-09-18",
+        "latest_location": "Facility - USA",
+    }
+
+
+def initiate_return(order_id: str, items: List[str], reason: str) -> Dict[str, Any]:
+    """
+    Initiates the official return process in the backend system.
     Args:
         order_id: The ID of the order to be returned.
         items: A list of item IDs to be returned.
         reason: The reason for the return.
     Returns:
-        A dictionary representing the return intent.
+        A dictionary with the RMA number and shipping label info.
     """
-    return {"intent": "return", "order_id": order_id, "items": items, "reason": reason}
+    # This is a stub for a real implementation.
+    print(f"Return for order {order_id} ({items}) initiated. Reason: {reason}")
+    return {
+        "intent": "return_initiated",
+        "rma_number": "RMA-12345XYZ",
+        "shipping_label_url": "https://shipping.example.com/label/RMA-12345XYZ.pdf",
+    }
+
+
+def check_return_eligibility(order_id: str, items: List[str]) -> Dict[str, Any]:
+    """
+    Checks if items are eligible for return based on company policy.
+    Args:
+        order_id: The ID of the order containing the items.
+        items: A list of item IDs to check.
+    Returns:
+        A dictionary confirming eligibility and providing reasons if not.
+    """
+    # This is a stub. A real implementation would contain business logic.
+    print(f"Checking return eligibility for order {order_id}, items: {items}")
+    # Simulate one item being ineligible
+    if "OLJ-001" in items:
+        return {
+            "eligible": False,
+            "reason": "Item 'OLJ-001' is a final sale item and cannot be returned.",
+        }
+    return {"eligible": True, "reason": "All items are eligible for return."}
+
+
+def get_cart_details(cart_id: str) -> Dict[str, Any]:
+    """
+    Retrieves the final list of items and total cost for a given cart ID.
+    Args:
+        cart_id: The unique identifier for the user's cart.
+    Returns:
+        A dictionary with the cart's contents and total price.
+    """
+    # This is a stub. A real implementation would call the cart service.
+    print(f"Fetching details for cart_id: {cart_id}")
+    return {
+        "cart_id": cart_id,
+        "items": [
+            {"product_id": "OLJ-001", "name": "Vintage Sunglasses", "quantity": 1},
+            {"product_id": "LSJ-002", "name": "Leather Jacket", "quantity": 1},
+        ],
+        "total_price": "$250.00",
+    }
+
+
+def place_order(cart_id: str, user_details: Dict, payment_info: Dict) -> Dict[str, Any]:
+    """
+    Submits the final order to the checkout service.
+    Args:
+        cart_id: The ID of the cart to be checked out.
+        user_details: Dictionary with user's name and address.
+        payment_info: Dictionary with mock payment details.
+    Returns:
+        A dictionary with the final order confirmation details.
+    """
+    # This is a stub. A real implementation would call the checkout service.
+    print(
+        f"Placing order for cart {cart_id} with details {user_details} and payment {payment_info}")
+    return {
+        "order_confirmation": {
+            "order_id": "ABC-123-XYZ",
+            "status": "success",
+            "shipping_tracking_id": "1Z999AA10123456784",
+            "message": "Your order has been placed successfully!",
+        }
+    }
+
+
+def add_items_to_cart(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Adds one or more items to the user's shopping cart.
+
+    Args:
+        items: A list of products to add. Each product should be a
+               dictionary with "product_id" and "quantity" keys.
+               Example: [{"product_id": "OLJ-001", "quantity": 1}]
+
+    Returns:
+        A dictionary representing the updated state of the cart.
+    """
+    # This is a placeholder for the actual API call to the cart service.
+    # We would replace this with the correct gRPC or HTTP call.
+    cart_service_url = "http://cartservice:7070/cart"  # Example URL
+    try:
+        response = requests.post(cart_service_url, json={"items": items})
+        response.raise_for_status()  # Raise an exception for bad status codes
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": f"Could not connect to cart service: {e}"}
 
 
 # ADK FunctionTool wrappers
@@ -264,6 +376,26 @@ order_details_tool = FunctionTool(
     get_order_details,
 )
 
-draft_return_tool = FunctionTool(
-    draft_return_intent,
+initiate_return_tool = FunctionTool(
+    initiate_return,
+)
+
+add_to_cart_tool = FunctionTool(
+    add_items_to_cart,
+)
+
+track_shipment_tool = FunctionTool(
+    track_shipment,
+)
+
+check_return_eligibility_tool = FunctionTool(
+    check_return_eligibility,
+)
+
+get_cart_details_tool = FunctionTool(
+    get_cart_details,
+)
+
+place_order_tool = FunctionTool(
+    place_order,
 )

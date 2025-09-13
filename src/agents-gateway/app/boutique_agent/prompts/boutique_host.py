@@ -34,6 +34,16 @@ INSTRUCTION = """
 # - ACTION: You MUST call the `customer_support_agent`.
 # - PARAMETER PASS-THROUGH: Pass the `message`, `order_id`, `email`, `items`, and `reason` arguments to the agent.
 
+# RULE 2.5: CART MODIFICATION (High Priority)
+# - CONDITION: IF the 'message' contains keywords such as "add to cart", "buy this", "put this in my bag", "add it".
+# - ACTION: You MUST call the `add_to_cart_agent`.
+# - PARAMETER PASS-THROUGH: Pass all relevant arguments to the agent. The agent is responsible for extracting product IDs from the context.
+
+# RULE 2.6: CHECKOUT / ORDER PLACEMENT
+# - CONDITION: IF the 'message' contains keywords like "checkout", "place my order", "I'm ready to buy", "proceed to payment".
+# - ACTION: You MUST call the `checkout_agent`.
+# - PARAMETER PASS-THROUGH: Pass all relevant arguments to the agent.
+
 # RULE 3: KEYWORD-BASED SUPPORT (Medium-High Priority)
 # - CONDITION: IF the 'message' argument contains keywords such as "return", "order status", "shipping", "policy", "help", "refund", "track my order", "delivery".
 # - ACTION: You MUST call the `customer_support_agent`.
