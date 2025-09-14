@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import functools
+import os
 from typing import Any, Dict, Optional
 
 import psycopg2
+from google.cloud import secretmanager
 from psycopg2.pool import SimpleConnectionPool
 
 from .config import get_settings
@@ -16,6 +18,27 @@ def init_pool() -> SimpleConnectionPool:
     global _pool
     if _pool is None:
         s = get_settings()
+        password = s.DB_PASSWORD
+
+        # Check for AlloyDB secret name and fetch from Secret Manager if available
+        alloydb_secret_name = os.environ.get("ALLOYDB_SECRET_NAME")
+        if alloydb_secret_name:
+            try:
+                client = secretmanager.SecretManagerServiceClient()
+                secret_version_name = client.secret_version_path(
+                    s.PROJECT_ID, alloydb_secret_name, "latest"
+                )
+                response = client.access_secret_version(
+                    name=secret_version_name)
+                password = response.payload.data.decode("UTF-8")
+            except Exception as e:
+                # Handle exceptions for cases where the secret can't be fetched
+                # (e.g., permissions error, secret not found).
+                # For this application, we will raise the exception to fail fast.
+                raise RuntimeError(
+                    f"Failed to access secret: {alloydb_secret_name}"
+                ) from e
+
         _pool = SimpleConnectionPool(
             minconn=1,
             maxconn=10,
@@ -23,7 +46,7 @@ def init_pool() -> SimpleConnectionPool:
             port=s.DB_PORT,
             dbname=s.DB_NAME,
             user=s.DB_USER,
-            password=s.DB_PASSWORD,
+            password=password,
         )
     return _pool
 

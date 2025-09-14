@@ -46,6 +46,7 @@ gcloud services enable generativelanguage.googleapis.com
 
 # Set our DB credentials behind the secret
 echo $PGPASSWORD | gcloud secrets create ${ALLOYDB_SECRET_NAME} --data-file=-
+echo $GOOGLE_API_KEY | gcloud secrets create google-api-key-secret --data-file=-
 
 # Set up needed service connection
 gcloud compute addresses create ${ALLOYDB_SERVICE_NAME} \
@@ -132,4 +133,8 @@ gcloud iam service-accounts add-iam-policy-binding ${ALLOYDB_USER_GSA_ID} \
 
 gcloud iam service-accounts add-iam-policy-binding ${ALLOYDB_USER_GSA_ID} \
     --member "serviceAccount:${PROJECT_ID}.svc.id.goog[default/productcatalogservice]" \
+    --role roles/iam.workloadIdentityUser
+
+gcloud iam service-accounts add-iam-policy-binding ${ALLOYDB_USER_GSA_ID} \
+    --member "serviceAccount:${PROJECT_ID}.svc.id.goog[default/agents-gateway]" \
     --role roles/iam.workloadIdentityUser

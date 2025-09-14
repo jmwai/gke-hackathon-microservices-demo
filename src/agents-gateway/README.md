@@ -7,7 +7,7 @@ Run locally:
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r src/agents-gateway/requirements.txt
-uvicorn src.agents-gateway.app.server:app --reload --port 8085
+uvicorn src.agents-gateway.app.server:app --reload --port 8080
 ```
 
 Endpoints (stubs):

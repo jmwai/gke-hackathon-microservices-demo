@@ -16,7 +16,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
 - base
-components:
+
+# the following components are applied on top of the base services
+# and are mutually exclusive
+# components:
 # - components/cymbal-branding
 # - components/google-cloud-operations
 # - components/memorystore

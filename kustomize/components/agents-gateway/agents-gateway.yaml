@@ -88,5 +88,13 @@ metadata:
   name: agents-gateway
   annotations:
     iam.gke.io/gcp-service-account: alloydb-user-sa@gemini-adk-vertex-2025.iam.gserviceaccount.com
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agents-gateway-secrets
+type: Opaque
+stringData:
+  DB_PASSWORD: "change-me"
 
 

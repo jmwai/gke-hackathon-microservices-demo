@@ -88,5 +88,3 @@ metadata:
   name: agents-gateway
   annotations:
     iam.gke.io/gcp-service-account: alloydb-user-sa@gemini-adk-vertex-2025.iam.gserviceaccount.com
-
-
