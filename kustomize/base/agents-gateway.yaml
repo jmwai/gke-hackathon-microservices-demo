@@ -53,19 +53,23 @@ spec:
           httpGet:
             path: /healthz
             port: 8080
-          initialDelaySeconds: 5
+          initialDelaySeconds: 30
+          timeoutSeconds: 10
+          periodSeconds: 15
         livenessProbe:
           httpGet:
             path: /healthz
             port: 8080
-          initialDelaySeconds: 10
+          initialDelaySeconds: 60
+          timeoutSeconds: 10
+          periodSeconds: 30
         resources:
           requests:
-            cpu: 100m
-            memory: 128Mi
-          limits:
             cpu: 200m
-            memory: 256Mi
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
 ---
 apiVersion: v1
 kind: Service
