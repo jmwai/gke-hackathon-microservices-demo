@@ -30,11 +30,15 @@
         <div id="chat-modal" class="chat-modal">
           <div id="bot-messages" class="bot-messages">
             <p class="bot-message">
-              <span class="bot-message-text">Hi, I'm the Cymbal Shops assistant. I can help you with your shopping experience.</span>
+              <span class="bot-message-text">Hi, I'm your AI shopping assistant! I can help you find products, provide recommendations, and answer questions about your shopping experience.</span>
             </p>
             <p class="bot-message">
-              <span class="bot-message-text">What can I help you with?</span>
+              <span class="bot-message-text">✨ I'm powered by advanced AI agents for more intelligent recommendations. What can I help you with today?</span>
             </p>
+            <div id="assistant-status" class="assistant-status" style="display: none;">
+              <span class="status-indicator agent-mode">🤖 AI Agent Mode</span>
+              <span class="status-indicator legacy-mode" style="display: none;">📝 Legacy Mode</span>
+            </div>
           </div>
           <div class="bot-input">
             <input id="bot-input-text" type="text" style="margin-right: 30px;" class="bot-input-text" placeholder="Recommend me items...">
@@ -76,6 +80,9 @@
   const botMessages = document.getElementById("bot-messages");
   const botbutton = document.getElementById("bot-input-button");
   const botinput = document.getElementById("bot-input-text");
+  const assistantStatus = document.getElementById("assistant-status");
+  
+  let isAgentMode = true; // Will be determined by feature flags
 
   async function main() {
     botbutton.addEventListener("click", handleButtonClick);
@@ -85,6 +92,40 @@
         botbutton.click();
       }
     });
+    
+    // Load feature flags to determine assistant mode
+    await loadAssistantFeatureFlags();
+    updateStatusIndicator();
+  }
+  
+  async function loadAssistantFeatureFlags() {
+    try {
+      const response = await fetch("{{ $.baseUrl }}/api/feature-flags");
+      if (response.ok) {
+        const flags = await response.json();
+        isAgentMode = flags.agent_assistant_enabled !== false;
+        console.log("Assistant mode:", isAgentMode ? "AI Agent" : "Legacy");
+      }
+    } catch (error) {
+      console.log("Feature flags not available, using default mode");
+      isAgentMode = true;
+    }
+  }
+  
+  function updateStatusIndicator() {
+    if (assistantStatus) {
+      assistantStatus.style.display = 'block';
+      const agentIndicator = assistantStatus.querySelector('.agent-mode');
+      const legacyIndicator = assistantStatus.querySelector('.legacy-mode');
+      
+      if (isAgentMode) {
+        agentIndicator.style.display = 'inline-block';
+        legacyIndicator.style.display = 'none';
+      } else {
+        agentIndicator.style.display = 'none';
+        legacyIndicator.style.display = 'inline-block';
+      }
+    }
   }
 
   async function handleButtonClick() {
@@ -130,37 +171,111 @@
     botMessages.appendChild(botMessage);
     botMessages.scrollTo(0, botMessages.scrollHeight);
 
-    // Request a response from the Shopping Assistant
-    const response = await fetch("{{ $.baseUrl }}/bot", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        message: message,
-        image: image
-      }),
-    });
-    const responseJson = await response.json();
-    console.log(responseJson);
+    try {
+      // Request a response from the Shopping Assistant
+      const response = await fetch("{{ $.baseUrl }}/bot", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: message,
+          image: image
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const responseJson = await response.json();
+      console.log("Assistant response:", responseJson);
 
-    // Fetch the product IDs from the response
-    const extractedIds = extractIdsFromString(responseJson.message);
-    console.log(extractedIds);
+      // Handle enhanced agent response format
+      if (responseJson.products && Array.isArray(responseJson.products)) {
+        // Enhanced response with direct product data
+        botMessageSpan.innerText = responseJson.message || "Here are some recommendations for you!";
+        botMessage.classList.remove("bot-message-loading");
+        
+        await renderProductsFromData(responseJson.products);
+      } else {
+        // Legacy response format - extract product IDs from message
+        const extractedIds = extractIdsFromString(responseJson.message);
+        console.log("Extracted product IDs:", extractedIds);
 
-    // Replace the placeholder bot message text with the real response
-    // Making sure to remove any lists or product IDs from that message
-    botMessageSpan.innerText = responseJson.message.replace(/\n+[-*\d][\S\s]*/g, "");
-    botMessage.classList.remove("bot-message-loading");
+        // Replace the placeholder bot message text with the real response
+        // Making sure to remove any lists or product IDs from that message
+        botMessageSpan.innerText = responseJson.message.replace(/\n+[-*\d][\S\s]*/g, "");
+        botMessage.classList.remove("bot-message-loading");
 
-    // If there are any product IDs...
-    if (extractedIds.length > 0) {
-      // Construct root products div
-      const botProductsDiv = document.createElement("div");
-      botProductsDiv.classList.add("bot-products");
+        // If there are any product IDs, render them
+        if (extractedIds.length > 0) {
+          await renderProductsFromIds(extractedIds);
+        }
+      }
+    } catch (error) {
+      console.error("Assistant request failed:", error);
+      botMessageSpan.innerText = "Sorry, I'm having trouble right now. Please try again.";
+      botMessage.classList.remove("bot-message-loading");
+    }
 
-      // For each product...
-      for (const id of extractedIds) {
+    botMessages.scrollTo(0, botMessages.scrollHeight);
+
+    // Re-enable button and input field
+    botbutton.disabled = false;
+    botinput.disabled = false;
+    botinput.focus();
+  }
+
+  // Enhanced function to render products from direct data
+  async function renderProductsFromData(products) {
+    if (!products || products.length === 0) return;
+
+    // Construct root products div
+    const botProductsDiv = document.createElement("div");
+    botProductsDiv.classList.add("bot-products");
+
+    // For each product...
+    for (const product of products) {
+      // Construct main product div
+      const botProductDiv = document.createElement("a");
+      botProductDiv.classList.add("bot-product");
+      botProductDiv.href = "{{ $.baseUrl }}/product/" + product.id;
+
+      // Construct product image
+      const botProductImg = document.createElement("img");
+      botProductImg.src = product.picture || "/static/img/products/placeholder.jpg";
+      botProductImg.classList.add("bot-product-img");
+      botProductImg.onerror = function() { this.style.display = 'none'; };
+      botProductDiv.appendChild(botProductImg);
+
+      // Construct product description div
+      const botProductDescription = document.createElement("div");
+      botProductDescription.classList.add("bot-product-description");
+      let productDescription = product.description || "";
+      if (productDescription.length > 350) { // Shorten descriptions that are too long
+        productDescription = productDescription.substring(0, 330) + '...';
+      }
+      botProductDescription.innerHTML = "<b>" + (product.name || "Unknown Product") + "</b><br>" + productDescription;
+      botProductDiv.appendChild(botProductDescription);
+
+      // Append main product div into the root products div
+      botProductsDiv.appendChild(botProductDiv);
+    }
+    
+    // Render products
+    botMessages.appendChild(botProductsDiv);
+  }
+
+  // Legacy function to render products from IDs (backward compatibility)
+  async function renderProductsFromIds(extractedIds) {
+    // Construct root products div
+    const botProductsDiv = document.createElement("div");
+    botProductsDiv.classList.add("bot-products");
+
+    // For each product...
+    for (const id of extractedIds) {
+      try {
         // Retrieve product metadata from the Product Catalog
         const productResponse = await fetch("{{ $.baseUrl }}/product-meta/" + id, {
           method: "GET",
@@ -168,6 +283,12 @@
             "Content-Type": "application/json",
           },
         });
+        
+        if (!productResponse.ok) {
+          console.warn(`Failed to fetch product ${id}: ${productResponse.status}`);
+          continue;
+        }
+        
         const product = await productResponse.json();
 
         // Construct main product div
@@ -194,17 +315,13 @@
 
         // Append main product div into the root products div
         botProductsDiv.appendChild(botProductDiv);
+      } catch (error) {
+        console.error(`Error fetching product ${id}:`, error);
       }
-      // Render products
-      botMessages.appendChild(botProductsDiv)
     }
-
-    botMessages.scrollTo(0, botMessages.scrollHeight);
-
-    // Re-enable button and input field
-    botbutton.disabled = false;
-    botinput.disabled = false;
-    botinput.focus();
+    
+    // Render products
+    botMessages.appendChild(botProductsDiv);
   }
 
   main();

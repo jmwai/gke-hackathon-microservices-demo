@@ -39,6 +39,7 @@
     <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/cart.css">
     <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/order.css">
     <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/bot.css">
+    <script src="{{ $.baseUrl }}/static/js/smart-search.js" defer></script>
     {{ if $.is_cymbal_brand }}
     <link rel='shortcut icon' type='image/x-icon' href='{{ $.baseUrl }}/static/favicon-cymbal.ico' />
     {{ else }}
@@ -64,6 +65,32 @@
                     <img src="{{ $.baseUrl }}/static/icons/Hipster_NavLogo.svg" alt="" class="top-left-logo" />
                     {{ end }}
                 </a>
+                
+                <!-- Smart Search Bar -->
+                <div class="smart-search-container">
+                    <div class="smart-search-wrapper">
+                        <input type="text" 
+                               id="smart-search-input" 
+                               class="smart-search-input" 
+                               placeholder="Ask me anything about products... (e.g., 'summer dress for a beach wedding')"
+                               autocomplete="off">
+                        <button type="button" id="smart-search-btn" class="smart-search-btn">
+                            <span class="material-symbols-outlined">search</span>
+                        </button>
+                        <div class="search-loading" id="search-loading" style="display: none;">
+                            <span class="material-symbols-outlined spinning">autorenew</span>
+                        </div>
+                    </div>
+                    <div class="smart-search-results" id="smart-search-results" style="display: none;">
+                        <!-- Results will be populated by JavaScript -->
+                    </div>
+                    <div class="smart-search-suggestions">
+                        <span class="suggestion-chip" data-query="warm clothes for winter hiking">🧥 Winter hiking gear</span>
+                        <span class="suggestion-chip" data-query="elegant dress for dinner party">👗 Elegant evening wear</span>
+                        <span class="suggestion-chip" data-query="comfortable shoes for walking">👟 Comfortable walking shoes</span>
+                    </div>
+                </div>
+                
                 <div class="controls">
 
                     {{ if $.show_currency }}
@@ -87,6 +114,10 @@
                       <img src="{{ $.baseUrl }}/static/icons/Hipster_WandIcon.svg" style="width: 22px; height: 22px;" alt="Assistant icon" class="logo" title="Assistant" />
                     </a>
                     {{ end }}
+
+                    <a href="{{ $.baseUrl }}/support" class="cart-link">
+                      <span style="font-size: 22px; color: #853B5C;" title="Customer Support">🎧</span>
+                    </a>
 
                     <a href="{{ $.baseUrl }}/cart" class="cart-link">
                         <img src="{{ $.baseUrl }}/static/icons/Hipster_CartIcon.svg" alt="Cart icon" class="logo" title="Cart" />
