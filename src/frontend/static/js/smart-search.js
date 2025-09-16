@@ -18,26 +18,16 @@ class SmartSearch {
 
     initializeElements() {
         this.searchInput = document.getElementById('smart-search-input');
-        this.searchBtn = document.getElementById('smart-search-btn');
         this.loadingIndicator = document.getElementById('search-loading');
-        this.resultsContainer = document.getElementById('smart-search-results');
         this.suggestionsContainer = document.querySelector('.smart-search-suggestions');
     }
 
     bindEvents() {
-        // Search button click
-        this.searchBtn.addEventListener('click', () => this.performSearch());
-        
         // Enter key in search input
         this.searchInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
-                this.performSearch();
+                this.navigateToSearch();
             }
-        });
-        
-        // Input debouncing for live search
-        this.searchInput.addEventListener('input', (e) => {
-            this.debounceSearch(e.target.value);
         });
         
         // Suggestion chips
@@ -45,16 +35,8 @@ class SmartSearch {
         suggestionChips.forEach(chip => {
             chip.addEventListener('click', () => {
                 const query = chip.getAttribute('data-query');
-                this.searchInput.value = query;
-                this.performSearch();
+                this.navigateToSearchWithQuery(query);
             });
-        });
-        
-        // Click outside to close results
-        document.addEventListener('click', (e) => {
-            if (!e.target.closest('.smart-search-container')) {
-                this.hideResults();
-            }
         });
     }
 
@@ -70,15 +52,17 @@ class SmartSearch {
         }
     }
 
-    debounceSearch(query) {
-        clearTimeout(this.debounceTimeout);
-        this.debounceTimeout = setTimeout(() => {
-            if (query.length >= 3) {
-                this.performSearch(query);
-            } else if (query.length === 0) {
-                this.hideResults();
-            }
-        }, 300);
+    navigateToSearch() {
+        const query = this.searchInput.value.trim();
+        if (query) {
+            this.navigateToSearchWithQuery(query);
+        }
+    }
+
+    navigateToSearchWithQuery(query) {
+        // Navigate to search results page
+        const searchUrl = `/search?q=${encodeURIComponent(query)}`;
+        window.location.href = searchUrl;
     }
 
     async performSearch(query = null) {
@@ -171,20 +155,91 @@ class SmartSearch {
     }
 
     parseAgentResponse(agentData) {
-        console.log('Parsing agent response:', agentData);
+        console.log('Parsing agent response');
         
-        // Handle ADK agent response format
+        // Handle structured output from agent (with output_schema)
+        if (agentData.search_results && agentData.search_results.products) {
+            console.log('Found structured search results:', agentData.search_results);
+            return agentData.search_results.products.map(item => ({
+                id: item.id || 'unknown',
+                name: item.name || 'Unknown Product',
+                description: item.description || '',
+                picture: item.picture || '/static/img/products/placeholder.jpg'
+            }));
+        }
+
+        // Handle array format agent response
+        if (Array.isArray(agentData) && agentData.length > 0) {
+            let foundProducts = null;
+            
+            // Process all items in the array to find the one with structured JSON results
+            for (let i = 0; i < agentData.length; i++) {
+                const item = agentData[i];
+                
+                if (item.content && item.content.parts) {
+                    // Process all parts to find JSON
+                    for (let j = 0; j < item.content.parts.length; j++) {
+                        const part = item.content.parts[j];
+                        
+                        // Check for text parts with JSON
+                        if (part.text && (part.text.includes('"products"') || part.text.includes('[{'))) {
+                            try {
+                                if (part.text.startsWith('{') && part.text.endsWith('}')) {
+                                    const searchResults = JSON.parse(part.text);
+                                    if (searchResults.products && Array.isArray(searchResults.products)) {
+                                        foundProducts = searchResults.products.map(item => ({
+                                            id: item.id || 'unknown',
+                                            name: item.name || 'Unknown Product',
+                                            description: item.description || '',
+                                            picture: item.picture || item.product_image_url || '/static/img/products/placeholder.jpg'
+                                        }));
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn('Failed to parse JSON from text:', e);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (foundProducts) {
+                return foundProducts;
+            }
+        }
+        
+        // Handle candidates format agent response (fallback)
         if (agentData.candidates && agentData.candidates.length > 0) {
             const candidate = agentData.candidates[0];
             if (candidate.content && candidate.content.parts) {
-                // Look for function call responses containing product data
+                let foundProducts = null;
+                
                 for (const part of candidate.content.parts) {
-                    if (part.functionResponse && 
-                        part.functionResponse.name === 'text_vector_search') {
+                    // Check for text parts with JSON
+                    if (part.text && (part.text.includes('[{') || part.text.includes('"products"'))) {
+                        try {
+                            if (part.text.startsWith('{') && part.text.endsWith('}')) {
+                                const searchResults = JSON.parse(part.text);
+                                if (searchResults.products && Array.isArray(searchResults.products)) {
+                                    foundProducts = searchResults.products.map(item => ({
+                                        id: item.id || 'unknown',
+                                        name: item.name || 'Unknown Product',
+                                        description: item.description || '',
+                                        picture: item.picture || item.product_image_url || '/static/img/products/placeholder.jpg'
+                                    }));
+                                }
+                            }
+                        } catch (e) {
+                            console.warn('Failed to parse JSON from text:', e);
+                        }
+                    }
+                    
+                    // Check for functionResponse
+                    if (part.functionResponse && part.functionResponse.name === 'text_vector_search') {
                         try {
                             const response = part.functionResponse.response;
                             if (response && Array.isArray(response)) {
-                                return response.map(item => ({
+                                foundProducts = response.map(item => ({
                                     id: item.id || 'unknown',
                                     name: item.name || 'Unknown Product',
                                     description: item.description || '',
@@ -195,32 +250,22 @@ class SmartSearch {
                             console.warn('Failed to parse function response:', e);
                         }
                     }
-                    
-                    // Also check for text content that might contain structured data
-                    if (part.text) {
-                        try {
-                            // Try to extract JSON from the text
-                            const jsonMatch = part.text.match(/\[[\s\S]*\]/);
-                            if (jsonMatch) {
-                                const products = JSON.parse(jsonMatch[0]);
-                                if (Array.isArray(products)) {
-                                    return products.map(item => ({
-                                        id: item.id || 'unknown',
-                                        name: item.name || 'Unknown Product',
-                                        description: item.description || '',
-                                        picture: item.picture || item.product_image_url || '/static/img/products/placeholder.jpg'
-                                    }));
-                                }
-                            }
-                        } catch (e) {
-                            // Not JSON, continue with text parsing
-                        }
-                        
-                        // Fallback text parsing
-                        return this.extractProductsFromText(part.text);
-                    }
+                }
+                
+                if (foundProducts) {
+                    return foundProducts;
                 }
             }
+        }
+        
+        // Handle direct array response (in case the agent returns products directly)
+        if (Array.isArray(agentData)) {
+            return agentData.map(item => ({
+                id: item.id || 'unknown',
+                name: item.name || 'Unknown Product',
+                description: item.description || '',
+                picture: item.picture || item.product_image_url || '/static/img/products/placeholder.jpg'
+            }));
         }
         
         // Handle direct content response
@@ -228,6 +273,26 @@ class SmartSearch {
             return this.extractProductsFromText(agentData.content);
         }
         
+        // Handle string response that might contain JSON
+        if (typeof agentData === 'string') {
+            try {
+                const parsed = JSON.parse(agentData);
+                if (Array.isArray(parsed)) {
+                    return parsed.map(item => ({
+                        id: item.id || 'unknown',
+                        name: item.name || 'Unknown Product',
+                        description: item.description || '',
+                        picture: item.picture || item.product_image_url || '/static/img/products/placeholder.jpg'
+                    }));
+                }
+            } catch (e) {
+                // Not JSON, try text extraction
+                return this.extractProductsFromText(agentData);
+            }
+        }
+        
+        // Fallback: No products found
+        console.warn('No products found in agent response');
         return [];
     }
 

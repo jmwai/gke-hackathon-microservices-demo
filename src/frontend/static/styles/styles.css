@@ -136,48 +136,25 @@ header .h-control:first-child {
   font-style: italic;
 }
 
-.smart-search-btn {
-  background: #853B5C;
-  border: none;
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  margin-right: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background-color 0.3s ease;
-}
-
-.smart-search-btn:hover {
-  background: #9d4968;
-}
-
-.smart-search-btn .material-symbols-outlined {
-  color: white;
-  font-size: 20px;
-}
+/* Search button styles removed - search now triggered by Enter key */
 
 .search-loading {
   position: absolute;
   right: 8px;
-  width: 32px;
-  height: 32px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 4px 8px;
+  background: rgba(133, 59, 92, 0.1);
+  border-radius: 12px;
 }
 
-.search-loading .spinning {
+.search-loading .loading-text {
   color: #853B5C;
-  font-size: 18px;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .smart-search-results {

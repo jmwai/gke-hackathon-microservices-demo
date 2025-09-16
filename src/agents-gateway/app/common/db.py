@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import os
 from typing import Any, Dict, Optional
+import logging
 
 import psycopg2
 from google.cloud import secretmanager
@@ -10,45 +11,140 @@ from psycopg2.pool import SimpleConnectionPool
 
 from .config import get_settings
 
+logger = logging.getLogger(__name__)
 
 _pool: Optional[SimpleConnectionPool] = None
 
 
-def init_pool() -> SimpleConnectionPool:
+def get_secret_payload(project, secret, version="latest") -> str:
+    """Get secret from Google Cloud Secret Manager."""
+    client = secretmanager.SecretManagerServiceClient()
+    secret_version_name = client.secret_version_path(project, secret, version)
+    response = client.access_secret_version(
+        request={"name": secret_version_name})
+    return response.payload.data.decode("utf-8").strip()
+
+
+def init_pool():
     global _pool
     if _pool is None:
-        s = get_settings()
-        password = s.DB_PASSWORD
+        # Check if we should use AlloyDB connector
+        alloydb_cluster_name = os.environ.get("ALLOYDB_CLUSTER_NAME")
+        if alloydb_cluster_name:
+            logger.info("Using AlloyDB connector approach")
+            _pool = init_alloydb_pool()
+        else:
+            logger.info("Using direct IP connection approach")
+            _pool = init_direct_pool()
+    return _pool
 
-        # Check for AlloyDB secret name and fetch from Secret Manager if available
-        alloydb_secret_name = os.environ.get("ALLOYDB_SECRET_NAME")
-        if alloydb_secret_name:
-            try:
-                client = secretmanager.SecretManagerServiceClient()
-                secret_version_name = client.secret_version_path(
-                    s.PROJECT_ID, alloydb_secret_name, "latest"
-                )
-                response = client.access_secret_version(
-                    name=secret_version_name)
-                password = response.payload.data.decode("UTF-8")
-            except Exception as e:
-                # Handle exceptions for cases where the secret can't be fetched
-                # (e.g., permissions error, secret not found).
-                # For this application, we will raise the exception to fail fast.
-                raise RuntimeError(
-                    f"Failed to access secret: {alloydb_secret_name}"
-                ) from e
 
-        _pool = SimpleConnectionPool(
+def init_direct_pool() -> SimpleConnectionPool:
+    """Initialize connection pool using direct IP connection (legacy)."""
+    global _pool
+    s = get_settings()
+    password = s.DB_PASSWORD
+
+    # Check for AlloyDB secret name and fetch from Secret Manager if available
+    alloydb_secret_name = os.environ.get("ALLOYDB_SECRET_NAME")
+    if alloydb_secret_name:
+        try:
+            password = get_secret_payload(s.PROJECT_ID, alloydb_secret_name)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to access secret: {alloydb_secret_name}") from e
+
+    _pool = SimpleConnectionPool(
+        minconn=1,
+        maxconn=10,
+        host=s.DB_HOST,
+        port=s.DB_PORT,
+        dbname=s.DB_NAME,
+        user=s.DB_USER,
+        password=password,
+    )
+    return _pool
+
+
+def init_alloydb_pool():
+    """Initialize connection pool using AlloyDB connector."""
+
+    project_id = os.environ.get("PROJECT_ID")
+    region = os.environ.get("REGION")
+    alloydb_cluster_name = os.environ.get("ALLOYDB_CLUSTER_NAME")
+    alloydb_instance_name = os.environ.get("ALLOYDB_INSTANCE_NAME")
+    alloydb_database_name = os.environ.get("ALLOYDB_DATABASE_NAME")
+    alloydb_secret_name = os.environ.get("ALLOYDB_SECRET_NAME")
+
+    if not all([project_id, region, alloydb_cluster_name, alloydb_instance_name, alloydb_database_name, alloydb_secret_name]):
+        raise ValueError(
+            "Missing required AlloyDB environment variables for password auth")
+
+    # Get password from Secret Manager
+    password = get_secret_payload(project_id, alloydb_secret_name)
+
+    # Use the alloydb-python-connector for AlloyDB
+    try:
+        from google.cloud.alloydb.connector import Connector
+        import pg8000
+
+        def getconn():
+            # AlloyDB connector expects format: projects/<PROJECT>/locations/<REGION>/clusters/<CLUSTER>/instances/<INSTANCE>
+            connection_string = f"projects/{project_id}/locations/{region}/clusters/{alloydb_cluster_name}/instances/{alloydb_instance_name}"
+
+            # Use standard password authentication
+            connector = Connector()
+            conn = connector.connect(
+                connection_string,
+                "pg8000",
+                user="postgres",
+                db=alloydb_database_name,
+                password=password,
+            )
+            return conn
+
+        # Create a custom pool that uses the connector
+        return AlloyDBConnectionPool(getconn, minconn=1, maxconn=10)
+
+    except ImportError:
+        logger.error(
+            "cloud-sql-python-connector not available, falling back to direct connection")
+        # Fall back to direct connection if connector not available
+        return SimpleConnectionPool(
             minconn=1,
             maxconn=10,
-            host=s.DB_HOST,
-            port=s.DB_PORT,
-            dbname=s.DB_NAME,
-            user=s.DB_USER,
+            host="localhost",  # This will fail, but better than crashing
+            port=5432,
+            dbname=alloydb_database_name,
+            user="postgres",
             password=password,
         )
-    return _pool
+
+
+class AlloyDBConnectionPool:
+    """Simple connection pool wrapper for AlloyDB connector."""
+
+    def __init__(self, getconn_func, minconn=1, maxconn=10):
+        self.getconn_func = getconn_func
+        self.minconn = minconn
+        self.maxconn = maxconn
+        self._connections = []
+
+    def getconn(self):
+        """Get a connection from the pool."""
+        if self._connections:
+            return self._connections.pop()
+        return self.getconn_func()
+
+    def putconn(self, conn):
+        """Return a connection to the pool."""
+        if len(self._connections) < self.maxconn:
+            self._connections.append(conn)
+        else:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 def get_conn():
@@ -77,7 +173,8 @@ def health_check() -> Dict[str, Any]:
     }
     conn = get_conn()
     try:
-        with conn.cursor() as cur:
+        cur = conn.cursor()
+        try:
             # Columns present
             cur.execute(
                 """
@@ -134,6 +231,8 @@ def health_check() -> Dict[str, Any]:
                 {"name": name, "ivfflat": ("USING ivfflat" in definition)}
                 for (name, definition) in idx
             ]
+        finally:
+            cur.close()
     finally:
         put_conn(conn)
     return checks

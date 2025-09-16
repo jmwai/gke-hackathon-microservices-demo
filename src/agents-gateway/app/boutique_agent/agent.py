@@ -1,6 +1,8 @@
 from __future__ import annotations
 from google.adk.agents import LlmAgent, SequentialAgent
 from google.adk.tools import AgentTool
+from pydantic import BaseModel, Field
+from typing import List, Optional
 # from .callbacks import LoggingCallbackHandler, ModerationCallbackHandler
 
 from .prompts import (
@@ -36,6 +38,22 @@ GEMINI_MODEL = "gemini-2.5-flash"
 # logging_callback = LoggingCallbackHandler()
 # moderation_callback = ModerationCallbackHandler()
 
+
+# Pydantic schemas for structured output
+class ImageSearchResult(BaseModel):
+    id: str = Field(description="Product ID")
+    name: str = Field(description="Product name")
+    picture: str = Field(description="Product image URL")
+    similarity_score: float = Field(description="Visual similarity score")
+    description: Optional[str] = Field(description="Product description", default="")
+    distance: Optional[float] = Field(description="Search relevance score", default=0.0)
+
+
+class ImageSearchOutput(BaseModel):
+    products: List[ImageSearchResult] = Field(description="Visually similar products")
+    search_summary: str = Field(description="Summary of image search results")
+    total_results: int = Field(description="Number of results found")
+
 # Product Discovery Agent (ADK LlmAgent)
 # Responds to natural language queries about products.
 product_discovery_agent = LlmAgent(
@@ -55,6 +73,8 @@ image_search_agent = LlmAgent(
     instruction=image_search.INSTRUCTION,
     model=GEMINI_MODEL,
     tools=[image_search_tool],
+    output_schema=ImageSearchOutput,
+    output_key="image_search_results",
     # callbacks=[logging_callback],
 )
 

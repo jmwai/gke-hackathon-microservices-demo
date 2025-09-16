@@ -79,10 +79,23 @@ app: FastAPI = get_fast_api_app(
     memory_service_uri=MEMORY_BANK_SERVICE_URI,
     allow_origins=ALLOWED_ORIGINS,
     web=SERVE_WEB_INTERFACE,
-    trace_to_cloud=True,
+    trace_to_cloud=False,
 )
 
 print("ADK FastAPI app created successfully")
+
+# Add logging middleware to track requests
+
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    import time
+    start_time = time.time()
+    print(f"Request: {request.method} {request.url}")
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    print(f"Response: {response.status_code} in {process_time:.2f}s")
+    return response
 
 
 @app.get("/healthz")
@@ -96,3 +109,63 @@ def healthz() -> Dict[str, Any]:
     # db = health_check()
     # return {"status": "ok", "config": snap.model_dump(), "db": db}
     return {"status": "ok", "message": "Agents Gateway is healthy"}
+
+
+@app.get("/test-db")
+def test_db():
+    """Test database connection and show sample products."""
+    try:
+        from .common.db import get_conn, put_conn
+        print("Attempting database connection...")
+        conn = get_conn()
+        print("Database connection successful")
+        cur = conn.cursor()
+        try:
+            print("Executing query...")
+            cur.execute("SELECT id, name FROM catalog_items LIMIT 5")
+            products = cur.fetchall()
+            print(f"Query returned {len(products)} products")
+        finally:
+            cur.close()
+        put_conn(conn)
+        return {
+            "status": "ok",
+            "products_found": len(products),
+            "sample_products": [{"id": r[0], "name": r[1]} for r in products]
+        }
+    except Exception as e:
+        print(f"Database error: {str(e)}")
+        return {"status": "error", "error": str(e)}
+
+
+@app.get("/test-secret")
+def test_secret():
+    """Test Secret Manager access"""
+    try:
+        import os
+        from google.cloud import secretmanager
+        from .common.config import get_settings
+
+        settings = get_settings()
+        alloydb_secret_name = os.environ.get("ALLOYDB_SECRET_NAME")
+
+        if not alloydb_secret_name:
+            return {"status": "error", "error": "ALLOYDB_SECRET_NAME not set"}
+
+        client = secretmanager.SecretManagerServiceClient()
+        secret_version_name = client.secret_version_path(
+            settings.PROJECT_ID, alloydb_secret_name, "latest"
+        )
+        print(f"Attempting to access secret: {secret_version_name}")
+        response = client.access_secret_version(
+            request={"name": secret_version_name})
+        password_length = len(response.payload.data.decode("utf-8"))
+
+        return {
+            "status": "ok",
+            "secret_name": alloydb_secret_name,
+            "password_length": password_length
+        }
+    except Exception as e:
+        print(f"Secret Manager error: {str(e)}")
+        return {"status": "error", "error": str(e)}

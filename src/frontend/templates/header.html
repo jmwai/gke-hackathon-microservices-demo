@@ -72,17 +72,11 @@
                         <input type="text" 
                                id="smart-search-input" 
                                class="smart-search-input" 
-                               placeholder="Ask me anything about products... (e.g., 'summer dress for a beach wedding')"
+                               placeholder="Ask me anything... (e.g. 'recommend shoes for hiking?')"
                                autocomplete="off">
-                        <button type="button" id="smart-search-btn" class="smart-search-btn">
-                            <span class="material-symbols-outlined">search</span>
-                        </button>
                         <div class="search-loading" id="search-loading" style="display: none;">
-                            <span class="material-symbols-outlined spinning">autorenew</span>
+                            <span class="loading-text">Searching...</span>
                         </div>
-                    </div>
-                    <div class="smart-search-results" id="smart-search-results" style="display: none;">
-                        <!-- Results will be populated by JavaScript -->
                     </div>
                     <div class="smart-search-suggestions">
                         <span class="suggestion-chip" data-query="warm clothes for winter hiking">🧥 Winter hiking gear</span>
@@ -130,4 +124,8 @@
         </div>
 
     </header>
+
+    <!-- Include agent response parser for all pages -->
+    <script src="{{ $.baseUrl }}/static/js/agent-response-parser.js"></script>
+    
     {{end}}

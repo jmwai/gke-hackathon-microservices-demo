@@ -49,6 +49,9 @@ import tempfile
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue
+import threading
 
 
 def _log(msg: str) -> None:
@@ -181,6 +184,33 @@ def choose_primary_image(images: Any) -> Optional[str]:
     if isinstance(images, list) and images:
         return images[0]
     return None
+
+
+def upgrade_flipkart_image_url(src_url: str, target_size: int = 700) -> str:
+    """Increase Flipkart image resolution by changing /image/W/H/ to /image/700/700/ using URL-safe path edits.
+
+    Preserves any extra segment like 'x0' that can appear after the WxH pair.
+    """
+    try:
+        from urllib.parse import urlparse, urlunparse
+
+        u = urlparse(src_url)
+        if "flixcart.com" not in (u.netloc or ""):
+            return src_url
+
+        parts = (u.path or "").split("/")
+        # Find the 'image' segment and ensure the next two are numeric WxH
+        if "image" not in parts:
+            return src_url
+        idx = parts.index("image")
+        if len(parts) > idx + 2 and parts[idx + 1].isdigit() and parts[idx + 2].isdigit():
+            parts[idx + 1] = str(target_size)
+            parts[idx + 2] = str(target_size)
+            new_path = "/".join(parts)
+            return urlunparse((u.scheme, u.netloc, new_path, u.params, u.query, u.fragment))
+    except Exception:
+        return src_url
+    return src_url
 
 
 def gcs_https_url(bucket: str, object_name: str) -> str:
@@ -406,6 +436,7 @@ def run_local(args: argparse.Namespace) -> None:
         price_tuple = parse_price_inr_to_usd(normalize_string(obj.get(
             "selling_price")) or normalize_string(obj.get("actual_price")), args.fx_rate)
         primary_img = choose_primary_image(obj.get("images"))
+
         if not pid or not title or not desc or not price_tuple or not primary_img:
             reasons = []
             if not pid:
@@ -436,9 +467,10 @@ def run_local(args: argparse.Namespace) -> None:
         local_filename = f"{slug}.jpg"
         local_path = os.path.join(local_img_dir, local_filename)
         try:
+            download_url = upgrade_flipkart_image_url(primary_img)
             _log(
-                f"Downloading image (local) id={pid} name='{title}' url={primary_img}")
-            resp = requests.get(primary_img, timeout=30)
+                f"Downloading image (local) id={pid} name='{title}' url={download_url}")
+            resp = requests.get(download_url, timeout=30)
             resp.raise_for_status()
             with open(local_path, "wb") as imgf:
                 imgf.write(resp.content)
@@ -481,7 +513,6 @@ def run_gcp(args: argparse.Namespace) -> None:
     init_vertex(args.project, args.region)
     # Lazily import to avoid dependency for local mode
     from vertexai.vision_models import MultiModalEmbeddingModel, Image  # type: ignore
-    mme = MultiModalEmbeddingModel.from_pretrained("multimodalembedding@001")
 
     conn = connect_db(args)
 
@@ -490,99 +521,249 @@ def run_gcp(args: argparse.Namespace) -> None:
     seen_in_run: set[str] = set()
     category_counts: Dict[str, int] = {}
     # Compute cap thresholds
-    base_cap = args.max_per_category if args.max_per_category is not None else max(
-        5, target // 20)
+    if args.max_per_category is not None:
+        base_cap = args.max_per_category
+    else:
+        # For small sample sizes, be more generous with per-category caps
+        base_cap = max(
+            5, target // 10) if target <= 100 else max(10, target // 20)
+
     relax_start = int(target * max(0.0, min(1.0, args.cap_relax_start)))
     relax_final = int(target * max(0.0, min(1.0, args.cap_relax_final)))
     overflow_cap = int(math.ceil(base_cap * max(1.0, args.cap_relax_factor)))
 
-    for obj in stream_flipkart_items(args.input, limit=None, seed=args.seed):
-        if processed >= target:
-            break
-        pid = obj.get("pid") or obj.get("_id")
-        if not pid or pid in seen_in_run:
-            continue
-        seen_in_run.add(pid)
+    _log(
+        f"Cap settings: target={target}, base_cap={base_cap}, relax_start={relax_start}, relax_final={relax_final}, overflow_cap={overflow_cap}")
+    _log(
+        f"Args: max_per_category={args.max_per_category}, cap_relax_start={args.cap_relax_start}, cap_relax_factor={args.cap_relax_factor}")
 
-        # Skip if already present in DB
-        if product_exists(conn, pid):
-            _log(f"Skip gcp: already in DB id={pid}")
-            continue
+    # Create work queue for streaming items to workers
+    work_queue = Queue(maxsize=10)  # Buffer up to 10 items ahead
+    # Use list for mutable counter shared between threads
+    processed_count = [0]
+    queue_lock = threading.Lock()
 
-        title = normalize_string(obj.get("title"))
-        desc = normalize_string(obj.get("description"))
-        price_tuple = parse_price_inr_to_usd(normalize_string(obj.get(
-            "selling_price")) or normalize_string(obj.get("actual_price")), args.fx_rate)
-        primary_img = choose_primary_image(obj.get("images"))
-        if not title or not price_tuple or not primary_img:
-            reasons = []
-            if not title:
-                reasons.append("missing title")
-            if not price_tuple:
-                reasons.append("missing/invalid price")
-            if not primary_img:
-                reasons.append("no image")
-            _log(f"Skip gcp: reasons={'; '.join(reasons)}")
-            continue
+    def producer():
+        """Producer thread that feeds work items to the queue"""
+        items_added = 0
+        for obj in stream_flipkart_items(args.input, limit=None, seed=args.seed):
+            if items_added >= target:
+                break
 
-        cats = derive_categories(normalize_string(
-            obj.get("category")), normalize_string(obj.get("sub_category")))
-        sub_cat = cats[1] if len(cats) > 1 else (
-            cats[0] if cats else "uncategorized")
+            pid = obj.get("pid") or obj.get("_id")
+            if not pid or pid in seen_in_run:
+                continue
+            seen_in_run.add(pid)
 
-        # Staged cap enforcement
-        current = category_counts.get(sub_cat, 0)
-        if processed < relax_start and current >= base_cap:
-            _log(
-                f"Skip gcp: category cap (strict) sub_cat='{sub_cat}' base_cap={base_cap}")
-            continue
-        if processed < relax_final and current >= overflow_cap:
-            _log(
-                f"Skip gcp: category cap (relaxed) sub_cat='{sub_cat}' overflow_cap={overflow_cap}")
-            continue
+            # Skip if already present in DB
+            if product_exists(conn, pid):
+                _log(f"Skip gcp: already in DB id={pid}")
+                continue
 
-        slug = slugify_name(title or str(pid))
-        object_name = f"products/{slug}.jpg"
-        _log(
-            f"Uploading image to GCS object={object_name} for id={pid} name='{title}'")
-        https_url = ensure_gcs_object(args.bucket, object_name, primary_img)
-        _log(f"Uploaded image: {https_url}")
-        combined_desc = f"{title}. {desc}" if desc else title
-        record = build_product_record(
-            obj,
-            picture_url=https_url,
-            price_usd=price_tuple,
-            categories=cats,
-            description_text=combined_desc,
-        )
-        # add DB-only fields
-        record["product_image_url"] = https_url
-        record["metadata"] = {
-            "brand": normalize_string(obj.get("brand")),
-            "average_rating": normalize_string(obj.get("average_rating")),
-            "discount": normalize_string(obj.get("discount")),
-            "out_of_stock": obj.get("out_of_stock"),
-            "url": normalize_string(obj.get("url")),
-            "product_details": obj.get("product_details"),
-            "original_images": obj.get("images"),
-        }
+            title = normalize_string(obj.get("title"))
+            desc = normalize_string(obj.get("description"))
+            price_tuple = parse_price_inr_to_usd(
+                normalize_string(obj.get("selling_price")) or normalize_string(
+                    obj.get("actual_price")),
+                args.fx_rate,
+            )
+            primary_img = choose_primary_image(obj.get("images"))
+            if not title or not price_tuple or not primary_img:
+                reasons = []
+                if not title:
+                    reasons.append("missing title")
+                if not price_tuple:
+                    reasons.append("missing/invalid price")
+                if not primary_img:
+                    reasons.append("no image")
+                _log(f"Skip gcp: reasons={'; '.join(reasons)}")
+                continue
 
-        # --- Compute text+image embeddings in a single call (1408-d) ---
+            cats = derive_categories(
+                normalize_string(obj.get("category")),
+                normalize_string(obj.get("sub_category")),
+            )
+            sub_cat = cats[1] if len(cats) > 1 else (
+                cats[0] if cats else "uncategorized")
+
+            # Simple category counting (caps disabled for now)
+            with queue_lock:
+                current = category_counts.get(sub_cat, 0)
+                category_counts[sub_cat] = current + 1
+
+            slug = slugify_name(title or str(pid))
+            object_name = f"products/{slug}.jpg"
+            combined_desc_full = f"{title}. {desc}" if desc else title
+            # Prepare a safe-length variant strictly for embeddings
+            combined_desc_embed = _clamp_text(combined_desc_full, 1000)
+
+            work_item = {
+                "obj": obj,
+                "pid": pid,
+                "title": title,
+                "desc": desc,
+                "price_tuple": price_tuple,
+                "primary_img": primary_img,
+                "cats": cats,
+                "sub_cat": sub_cat,
+                "object_name": object_name,
+                # Use full description for DB, and clamped for embeddings
+                "combined_desc_full": combined_desc_full,
+                "combined_desc_embed": combined_desc_embed,
+            }
+
+            # Add to queue (blocks if queue is full)
+            work_queue.put(work_item)
+            items_added += 1
+
+            if items_added % 10 == 0:
+                _log(f"Producer: queued {items_added} items")
+
+        # Signal end of work
+        for _ in range(5):  # Send sentinel for each worker
+            work_queue.put(None)
+        _log(f"Producer finished: queued {items_added} total items")
+
+    _log("Starting streaming producer-consumer processing...")
+
+    # Initialize vertex AI for embedding models (will be created per thread)
+    try:
+        import vertexai
+        from vertexai.vision_models import MultiModalEmbeddingModel, Image
+        vertexai.init(project=args.project, location=args.region)
+        _log("Initialized Vertex AI for multimodal embedding")
+        vertex_initialized = True
+    except Exception as exc:
+        _log(f"ERROR: Failed to initialize Vertex AI: {exc}")
+        vertex_initialized = False
+
+    def consumer_worker() -> None:
+        """Consumer worker that processes items from the queue"""
+        import traceback
+        local_processed = 0
+        worker_id = threading.current_thread().name
+        _log(f"Worker {worker_id} started")
+
+        while True:
+            item = None
+            try:
+                # Get work item from queue (blocks until available)
+                item = work_queue.get(timeout=30)
+                if item is None:  # Sentinel value means no more work
+                    _log(
+                        f"Worker {worker_id} finished: processed {local_processed} items")
+                    break
+
+                _log(
+                    f"Worker {worker_id} processing item: {item.get('pid', 'unknown')}")
+
+                # Process the item
+                pid, sub_cat = process_single_item(item)
+                local_processed += 1
+
+                # Update shared counter
+                with queue_lock:
+                    processed_count[0] += 1
+                    _log(
+                        f"[{processed_count[0]}/{target}] Worker {worker_id} upserted product id={pid} sub_cat='{sub_cat}'")
+
+            except Exception as exc:
+                error_msg = f"Worker {worker_id} failed processing item {item.get('pid', 'unknown') if item else 'None'}: {str(exc)}"
+                _log(f"ERROR: {error_msg}")
+                _log(f"ERROR: Traceback: {traceback.format_exc()}")
+            finally:
+                if item is not None:
+                    work_queue.task_done()
+
+    def _clamp_text(text: str, limit: int = 1000) -> str:
+        """Normalize and clamp text to a safe length for Vertex multimodal embeddings (<1024).
+
+        - Collapses whitespace
+        - Trims
+        - Cuts at the last space before limit when possible
+        """
+        if not text:
+            return ""
+        s = re.sub(r"\s+", " ", str(text)).strip()
+        if len(s) <= limit:
+            return s
+        cut = s.rfind(" ", 0, limit)
+        return (s[:cut] if cut != -1 else s[:limit]).rstrip()
+
+    def process_single_item(item: Dict[str, Any]) -> Tuple[str, str]:
         try:
-            image_uri = https_to_gcs_uri(https_url)
-            img = Image.load_from_file(image_uri)
-            emb = mme.get_embeddings(
-                image=img, contextual_text=combined_desc, dimension=1408)
-            text_vec = list(emb.text_embedding) if hasattr(
-                emb, "text_embedding") else None
-            image_vec = list(emb.image_embedding) if hasattr(
-                emb, "image_embedding") else None
+            # Download higher-res image and upload to GCS
+            thumbnail_img_url = item["primary_img"]
+            src_img_url = upgrade_flipkart_image_url(thumbnail_img_url)
+            _log(
+                f"Processing {item['pid']}: {thumbnail_img_url} -> {src_img_url}")
+            https_url = ensure_gcs_object(
+                args.bucket, item["object_name"], src_img_url)
         except Exception as exc:
-            _log(f"WARN: embedding failed for id={record['id']}: {exc}")
-            text_vec = None
-            image_vec = None
+            _log(f"ERROR in image processing for {item['pid']}: {exc}")
+            raise
 
-        # Prepare vector literals for pgvector
+        try:
+            # Build record
+            record = build_product_record(
+                item["obj"],
+                picture_url=https_url,
+                price_usd=item["price_tuple"],
+                categories=item["cats"],
+                # Keep full description in DB
+                description_text=item["combined_desc_full"],
+            )
+            record["product_image_url"] = https_url
+            record["metadata"] = {
+                "brand": normalize_string(item["obj"].get("brand")),
+                "average_rating": normalize_string(item["obj"].get("average_rating")),
+                "discount": normalize_string(item["obj"].get("discount")),
+                "out_of_stock": item["obj"].get("out_of_stock"),
+                "url": normalize_string(item["obj"].get("url")),
+                "product_details": item["obj"].get("product_details"),
+                "original_images": item["obj"].get("images"),
+            }
+        except Exception as exc:
+            _log(f"ERROR in record building for {item['pid']}: {exc}")
+            raise
+
+        # Compute multimodal embeddings (text+image 1408-d)
+        text_vec = None
+        image_vec = None
+        if vertex_initialized:
+            try:
+                # Create model instance per thread to avoid thread safety issues
+                mme = MultiModalEmbeddingModel.from_pretrained(
+                    "multimodalembedding@001")
+                image_uri = https_to_gcs_uri(https_url)
+                img = Image.load_from_file(image_uri)
+                # Clamp contextual text to avoid 400: Text field must be smaller than 1024 characters
+                ctx_text = _clamp_text(item["combined_desc_embed"], 1000)
+                emb = mme.get_embeddings(
+                    image=img, contextual_text=ctx_text, dimension=1408)
+                if hasattr(emb, "text_embedding"):
+                    text_vec = list(emb.text_embedding)
+                if hasattr(emb, "image_embedding"):
+                    image_vec = list(emb.image_embedding)
+            except Exception as exc:
+                msg = str(exc)
+                if "Text field must be smaller than 1024" in msg:
+                    # Fallback: image-only embedding if text is too long even after clamping
+                    try:
+                        emb = mme.get_embeddings(image=img, dimension=1408)
+                        if hasattr(emb, "image_embedding"):
+                            image_vec = list(emb.image_embedding)
+                        _log(
+                            f"INFO: text too long for id={record['id']}; used image-only embedding")
+                    except Exception as exc2:
+                        _log(
+                            f"WARN: image-only embedding also failed for id={record['id']}: {exc2}")
+                else:
+                    _log(
+                        f"WARN: embedding failed for id={record['id']}: {exc}")
+        else:
+            _log(f"WARN: Vertex AI not initialized for id={record['id']}")
+
         record["text_vec"] = format_vector_for_pg(
             text_vec) if text_vec else None
         record["image_vec"] = format_vector_for_pg(
@@ -590,16 +771,49 @@ def run_gcp(args: argparse.Namespace) -> None:
         record["text_model"] = "multimodalembedding@001" if text_vec else None
         record["image_model"] = "multimodalembedding@001" if image_vec else None
 
-        upsert_product(conn, record)
-        _log(
-            f"Upserted product id={record['id']} name='{record['name']}' sub_cat='{sub_cat}'")
-        processed += 1
-        category_counts[sub_cat] = category_counts.get(sub_cat, 0) + 1
+        try:
+            # Upsert (open short-lived connection to avoid cross-thread sharing)
+            c = connect_db(args)
+            try:
+                upsert_product(c, record)
+            finally:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+        except Exception as exc:
+            _log(f"ERROR in database upsert for {item['pid']}: {exc}")
+            raise
 
-    _log(f"Upserted {processed} products.")
-    if processed < target:
+        return (record["id"], item["sub_cat"])
+
+    # Start producer thread
+    producer_thread = threading.Thread(target=producer, name="Producer")
+    producer_thread.start()
+
+    # Start consumer workers
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit worker functions
+        worker_futures = [executor.submit(consumer_worker) for _ in range(5)]
+        _log("Started 5 consumer workers")
+
+        # Wait for producer to finish
+        producer_thread.join()
+        _log("Producer thread finished")
+
+        # Wait for all workers to complete
+        for future in as_completed(worker_futures):
+            try:
+                future.result()
+            except Exception as exc:
+                _log(f"ERROR: Worker thread failed: {exc}")
+
+    final_processed = processed_count[0]
+    _log(
+        f"Streaming processing complete. Upserted {final_processed}/{target} products.")
+    if final_processed < target:
         _log(
-            f"WARN: reached end of input before loading {target} items; loaded {processed}.")
+            f"WARN: reached end of input before loading {target} items; loaded {final_processed}.")
 
     # Removed in-DB text embedding step; we now use Vertex AI multimodal text embeddings (1408-d)
     # run_text_embeddings_in_db(conn)

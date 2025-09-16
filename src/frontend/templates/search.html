@@ -1,0 +1,160 @@
+<!--
+ Copyright 2020 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+{{ define "search" }}
+
+{{ template "header" . }}
+<div {{ with $.platform_css }} class="{{.}}" {{ end }}>
+  <span class="platform-flag">
+    {{$.platform_name}}
+  </span>
+</div>
+<main role="main" class="search-results">
+
+  <!-- The image at the top of the search page, displayed on smaller screens. -->
+  <div class="home-mobile-hero-banner d-lg-none"></div>
+
+  <div class="container-fluid">
+    <div class="row">
+      <div class="col-12 col-lg-12 px-10-percent">
+
+        <!-- Search Results Header -->
+        <div class="row search-results-header px-xl-6" style="margin-bottom: 2rem;">
+          <div class="col-12">
+            {{ if .query }}
+              <h2>Search Results for "{{ .query }}"</h2>
+              {{ if .products }}
+                <p class="text-muted">Found {{ len .products }} products</p>
+              {{ else }}
+                <p class="text-muted">No products found. Try a different search term.</p>
+              {{ end }}
+            {{ else }}
+              <h2>Search Products</h2>
+              <p class="text-muted">Enter a search term to find products</p>
+            {{ end }}
+          </div>
+        </div>
+
+        <!-- Search Results Grid -->
+        <div class="row search-results-row px-xl-6" style="row-gap: 2rem;">
+          {{ if .products }}
+            {{ range .products }}
+            <div class="col-6 col-md-4 col-lg-3 col-xl-2 hot-product-card" style="display:flex; flex-direction:column; align-items:center;">
+              <a href="{{ $.baseUrl }}/product/{{.Item.Id}}" style="display:block; text-decoration:none; color:inherit; width:100%;">
+                <div class="hot-product-card-img" style="position:relative; width:100%; max-width:320px; margin:0 auto; aspect-ratio: 1 / 1; overflow:hidden; border-radius:24px; background:#f5f5f7;">
+                  <img loading="lazy" decoding="async" fetchpriority="low" src="{{ $.baseUrl }}{{.Item.Picture}}" alt="{{ .Item.Name }}" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; image-rendering:auto;" />
+                  <div class="hot-product-card-img-overlay"></div>
+                </div>
+              </a>
+              <div style="width:100%; max-width:320px; margin:0 auto;">
+                <div class="hot-product-card-name">{{ .Item.Name }}</div>
+                <div class="hot-product-card-price">{{ renderMoney .Price }}</div>
+              </div>
+            </div>
+            {{ end }}
+          {{ end }}
+        </div>
+
+        <!-- Fallback Messages (hidden when AI search is active) -->
+        <div class="server-side-fallback" {{ if .query }}style="display: none;"{{ end }}>
+          {{ if .query }}
+          <!-- No Results Message -->
+          <div class="row px-xl-6">
+            <div class="col-12 text-center" style="padding: 4rem 0;">
+              <div style="color: #666; font-size: 1.2rem; margin-bottom: 1rem;">
+                <i class="fas fa-search" style="font-size: 3rem; margin-bottom: 1rem; display: block;"></i>
+                No products found for "{{ .query }}"
+              </div>
+              <p style="color: #888; font-size: 1rem; margin-bottom: 2rem;">
+                Try different keywords or browse our categories below.
+              </p>
+              <div class="search-suggestions">
+                <h5 style="margin-bottom: 1rem;">Try searching for:</h5>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center;">
+                  <a href="{{ $.baseUrl }}/search?q=shoes" class="btn btn-outline-primary btn-sm">Shoes</a>
+                  <a href="{{ $.baseUrl }}/search?q=shirts" class="btn btn-outline-primary btn-sm">Shirts</a>
+                  <a href="{{ $.baseUrl }}/search?q=winter gear" class="btn btn-outline-primary btn-sm">Winter Gear</a>
+                  <a href="{{ $.baseUrl }}/search?q=casual wear" class="btn btn-outline-primary btn-sm">Casual Wear</a>
+                </div>
+              </div>
+            </div>
+          </div>
+          {{ else }}
+          <!-- Welcome Message -->
+          <div class="row px-xl-6">
+            <div class="col-12 text-center" style="padding: 4rem 0;">
+              <div style="color: #666; font-size: 1.2rem; margin-bottom: 1rem;">
+                <i class="fas fa-search" style="font-size: 3rem; margin-bottom: 1rem; display: block;"></i>
+                Start your search
+              </div>
+              <p style="color: #888; font-size: 1rem; margin-bottom: 2rem;">
+                Use the search bar above to find products you're looking for.
+              </p>
+              <div class="search-suggestions">
+                <h5 style="margin-bottom: 1rem;">Popular searches:</h5>
+                <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center;">
+                  <a href="{{ $.baseUrl }}/search?q=comfortable shoes" class="btn btn-outline-primary btn-sm">Comfortable Shoes</a>
+                  <a href="{{ $.baseUrl }}/search?q=winter clothing" class="btn btn-outline-primary btn-sm">Winter Clothing</a>
+                  <a href="{{ $.baseUrl }}/search?q=casual shirts" class="btn btn-outline-primary btn-sm">Casual Shirts</a>
+                  <a href="{{ $.baseUrl }}/search?q=running gear" class="btn btn-outline-primary btn-sm">Running Gear</a>
+                </div>
+              </div>
+            </div>
+          </div>
+          {{ end }}
+        </div>
+
+        <!-- Footer for larger screens. -->
+        <div class="row d-none d-lg-block home-desktop-footer-row">
+          <div class="col-12 p-0">
+            {{ template "footer" . }}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Footer for smaller screens. -->
+<div class="d-lg-none">
+  {{ template "footer" . }}
+</div>
+
+<script src="{{ $.baseUrl }}/static/js/agent-response-parser.js"></script>
+<script src="{{ $.baseUrl }}/static/js/search-results.js"></script>
+<script>
+// Auto-focus search input when page loads and set current query
+document.addEventListener('DOMContentLoaded', function() {
+  const searchInput = document.getElementById('smart-search-input');
+  if (searchInput) {
+    // Set the current query from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const query = urlParams.get('q');
+    if (query) {
+      searchInput.value = query;
+    }
+    
+    // Focus if no query
+    if (!query) {
+      searchInput.focus();
+    }
+  }
+});
+</script>
+
+{{ end }}

@@ -12,12 +12,12 @@ class Settings(BaseSettings):
     PROJECT_ID: str = Field(..., description="GCP project id")
     REGION: str = Field("europe-west1", description="Vertex/AlloyDB region")
 
-    # Database (read-only)
-    DB_HOST: str = Field(...)
+    # Database (read-only) - Optional when using AlloyDB connector
+    DB_HOST: Optional[str] = Field(None)
     DB_PORT: int = Field(5432)
-    DB_NAME: str = Field("products")
+    DB_NAME: Optional[str] = Field(None)
     DB_USER: str = Field("postgres")
-    DB_PASSWORD: str = Field(...)
+    DB_PASSWORD: Optional[str] = Field(None)
 
     # Limits
     API_TOP_K_MAX: int = Field(50)

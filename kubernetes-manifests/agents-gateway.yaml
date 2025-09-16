@@ -29,14 +29,16 @@ spec:
           value: "europe-west1"
         - name: GOOGLE_CLOUD_LOCATION
           value: "europe-west1"
-        - name: DB_HOST
-          value: "34.14.6.17"
-        - name: DB_PORT
-          value: "5432"
-        - name: DB_NAME
+        - name: ALLOYDB_CLUSTER_NAME
+          value: "online-boutique"
+        - name: ALLOYDB_INSTANCE_NAME
+          value: "primary-instance"
+        - name: ALLOYDB_DATABASE_NAME
           value: "postgres"
-        - name: DB_USER
-          value: "postgres"
+        - name: ALLOYDB_TABLE_NAME
+          value: "catalog_items"
+        - name: ALLOYDB_SECRET_NAME
+          value: "alloydb-secret"
         - name: API_TOP_K_MAX
           value: "50"
         - name: MAX_UPLOAD_MB
@@ -45,8 +47,6 @@ spec:
           value: "INFO"
         - name: MODERATION_THRESHOLD
           value: "0.5"
-        - name: ALLOYDB_SECRET_NAME
-          value: "alloydb-secret"
         - name: GOOGLE_API_KEY_SECRET_NAME
           value: "google-api-key-secret"
         readinessProbe:

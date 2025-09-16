@@ -119,6 +119,75 @@ func (fe *frontendServer) homeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (fe *frontendServer) searchHandler(w http.ResponseWriter, r *http.Request) {
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+	query := r.URL.Query().Get("q")
+
+	log.WithField("query", query).Info("search page")
+
+	currencies, err := fe.getCurrencies(r.Context())
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "could not retrieve currencies"), http.StatusInternalServerError)
+		return
+	}
+
+	cart, err := fe.getCart(r.Context(), sessionID(r))
+	if err != nil {
+		renderHTTPError(log, r, w, errors.Wrap(err, "could not retrieve cart"), http.StatusInternalServerError)
+		return
+	}
+
+	type productView struct {
+		Item  *pb.Product
+		Price *pb.Money
+	}
+
+	var ps []productView
+
+	// If there's a query, perform search
+	if query != "" {
+		// For now, perform a simple product name search as fallback
+		// The smart search will be handled by JavaScript and AJAX
+		allProducts, err := fe.getProducts(r.Context())
+		if err != nil {
+			renderHTTPError(log, r, w, errors.Wrap(err, "could not retrieve products"), http.StatusInternalServerError)
+			return
+		}
+
+		// Simple text-based filtering for fallback
+		var filteredProducts []*pb.Product
+		queryLower := strings.ToLower(query)
+		for _, p := range allProducts {
+			if strings.Contains(strings.ToLower(p.GetName()), queryLower) ||
+				strings.Contains(strings.ToLower(p.GetDescription()), queryLower) {
+				filteredProducts = append(filteredProducts, p)
+			}
+		}
+
+		// Convert to productView
+		ps = make([]productView, len(filteredProducts))
+		for i, p := range filteredProducts {
+			price, err := fe.convertCurrency(r.Context(), p.GetPriceUsd(), currentCurrency(r))
+			if err != nil {
+				renderHTTPError(log, r, w, errors.Wrapf(err, "failed to do currency conversion for product %s", p.GetId()), http.StatusInternalServerError)
+				return
+			}
+			ps[i] = productView{p, price}
+		}
+	}
+
+	if err := templates.ExecuteTemplate(w, "search", injectCommonTemplateData(r, map[string]interface{}{
+		"show_currency": true,
+		"currencies":    currencies,
+		"products":      ps,
+		"query":         query,
+		"cart_size":     cartSize(cart),
+		"banner_color":  os.Getenv("BANNER_COLOR"),
+	})); err != nil {
+		log.Error(err)
+	}
+}
+
 func (plat *platformDetails) setPlatformDetails(env string) {
 	if env == "aws" {
 		plat.provider = "AWS"
@@ -544,8 +613,6 @@ func (fe *frontendServer) getProductByID(w http.ResponseWriter, r *http.Request)
 }
 
 func (fe *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request) {
-	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
-
 	// Check if we should use the enhanced agent-based assistant
 	if fe.shouldUseAgentAssistant() {
 		fe.enhancedChatBotHandler(w, r)
@@ -856,33 +923,70 @@ func (fe *frontendServer) agentSearchHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Forward the request to agents-gateway
-	agentGatewayURL := "http://agents-gateway:80/run"
-
-	// Create a new request to the agents-gateway
-	req, err := http.NewRequest(http.MethodPost, agentGatewayURL, r.Body)
-	if err != nil {
-		log.WithField("error", err).Error("failed to create agent request")
-		http.Error(w, `{"error": "Failed to create search request"}`, http.StatusInternalServerError)
+	// Parse the incoming request
+	var searchReq SearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&searchReq); err != nil {
+		log.WithField("error", err).Error("failed to parse search request")
+		http.Error(w, `{"error": "Invalid request format"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Copy headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	log.WithField("query", searchReq).Info("Agent search request received")
 
-	// Set timeout for agent requests
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+	// Create session with agents-gateway if needed
+	agentGatewayBaseURL := "http://agents-gateway:80"
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// Try to create session first
+	sessionURL := fmt.Sprintf("%s/apps/%s/users/%s/sessions", agentGatewayBaseURL, searchReq.AppName, searchReq.UserId)
+	sessionReqBody := map[string]string{
+		"appName": searchReq.AppName,
+		"userId":  searchReq.UserId,
+	}
+	sessionJSON, _ := json.Marshal(sessionReqBody)
+
+	sessionResp, err := client.Post(sessionURL, "application/json", strings.NewReader(string(sessionJSON)))
+	if err != nil {
+		log.WithField("error", err).Error("failed to create session with agents-gateway")
+		// Fall back to fallback search
+		fe.fallbackSearchWrapper(w, r, searchReq)
+		return
+	}
+	defer sessionResp.Body.Close()
+
+	var sessionData map[string]interface{}
+	if err := json.NewDecoder(sessionResp.Body).Decode(&sessionData); err != nil {
+		log.WithField("error", err).Error("failed to parse session response")
+		fe.fallbackSearchWrapper(w, r, searchReq)
+		return
 	}
 
-	log.Info("Forwarding search request to agents-gateway")
+	// Use the session ID from the agents-gateway response
+	if sessionId, ok := sessionData["id"].(string); ok {
+		searchReq.SessionId = sessionId
+	}
+
+	// Now make the actual search request
+	agentGatewayURL := agentGatewayBaseURL + "/run"
+	requestJSON, _ := json.Marshal(searchReq)
+
+	log.WithField("payload", string(requestJSON)).Info("Forwarding search request to agents-gateway")
+
+	req, err := http.NewRequest(http.MethodPost, agentGatewayURL, strings.NewReader(string(requestJSON)))
+	if err != nil {
+		log.WithField("error", err).Error("failed to create agent request")
+		fe.fallbackSearchWrapper(w, r, searchReq)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	// Execute the request
 	resp, err := client.Do(req)
 	if err != nil {
 		log.WithField("error", err).Error("agent search request failed")
-		http.Error(w, `{"error": "Agent search temporarily unavailable"}`, http.StatusServiceUnavailable)
+		fe.fallbackSearchWrapper(w, r, searchReq)
 		return
 	}
 	defer resp.Body.Close()
@@ -891,15 +995,93 @@ func (fe *frontendServer) agentSearchHandler(w http.ResponseWriter, r *http.Requ
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.WithField("error", err).Error("failed to read agent response")
-		http.Error(w, `{"error": "Failed to read agent response"}`, http.StatusInternalServerError)
+		fe.fallbackSearchWrapper(w, r, searchReq)
 		return
 	}
+
+	// Log response snippet
+	respSnippet := string(body)
+	if len(respSnippet) > 512 {
+		respSnippet = respSnippet[:512] + "..."
+	}
+	log.WithFields(logrus.Fields{"status": resp.StatusCode, "response": respSnippet}).Info("Agent search response")
 
 	// Forward the status code and response
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
 
 	log.WithField("status", resp.StatusCode).Info("Agent search request completed")
+}
+
+type SearchRequest struct {
+	AppName    string                 `json:"appName"`
+	UserId     string                 `json:"userId"`
+	SessionId  string                 `json:"sessionId"`
+	NewMessage map[string]interface{} `json:"newMessage"`
+}
+
+func (fe *frontendServer) fallbackSearchWrapper(w http.ResponseWriter, r *http.Request, searchReq SearchRequest) {
+	// Extract search query from the agent request and perform fallback search
+	if newMessage, ok := searchReq.NewMessage["parts"].([]interface{}); ok {
+		if len(newMessage) > 0 {
+			if part, ok := newMessage[0].(map[string]interface{}); ok {
+				if query, ok := part["text"].(string); ok {
+					// Perform fallback search and return results
+					products, err := fe.getProducts(r.Context())
+					if err != nil {
+						http.Error(w, `{"error": "Search temporarily unavailable"}`, http.StatusInternalServerError)
+						return
+					}
+
+					// Simple text matching
+					var matchingProducts []map[string]interface{}
+					queryLower := strings.ToLower(query)
+
+					for _, product := range products {
+						nameMatch := strings.Contains(strings.ToLower(product.GetName()), queryLower)
+						descMatch := strings.Contains(strings.ToLower(product.GetDescription()), queryLower)
+
+						// Check categories
+						categoryMatch := false
+						for _, category := range product.GetCategories() {
+							if strings.Contains(strings.ToLower(category), queryLower) {
+								categoryMatch = true
+								break
+							}
+						}
+
+						if nameMatch || descMatch || categoryMatch {
+							matchingProducts = append(matchingProducts, map[string]interface{}{
+								"id":          product.GetId(),
+								"name":        product.GetName(),
+								"description": product.GetDescription(),
+								"picture":     product.GetPicture(),
+								"categories":  product.GetCategories(),
+							})
+						}
+
+						// Limit results
+						if len(matchingProducts) >= 10 {
+							break
+						}
+					}
+
+					response := map[string]interface{}{
+						"products": matchingProducts,
+						"query":    query,
+						"count":    len(matchingProducts),
+					}
+
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(response)
+					return
+				}
+			}
+		}
+	}
+
+	// If we can't extract the query, return an error
+	http.Error(w, `{"error": "Could not process search request"}`, http.StatusInternalServerError)
 }
 
 func (fe *frontendServer) fallbackSearchHandler(w http.ResponseWriter, r *http.Request) {

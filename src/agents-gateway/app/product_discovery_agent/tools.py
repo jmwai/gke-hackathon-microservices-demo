@@ -117,7 +117,8 @@ def text_vector_search(query: str, filters: Optional[Dict[str, Any]], top_k: int
 
     conn = get_conn()
     try:
-        with conn.cursor() as cur:
+        cur = conn.cursor()
+        try:
             cur.execute(sql, params)
             out = []
             for r in cur.fetchall():
@@ -128,8 +129,9 @@ def text_vector_search(query: str, filters: Optional[Dict[str, Any]], top_k: int
                     "product_image_url": r[4],
                     "distance": float(r[5]),
                 })
-            print(out)
             return out
+        finally:
+            cur.close()
     finally:
         put_conn(conn)
 
@@ -166,7 +168,8 @@ def image_vector_search(image_bytes: bytes, filters: Optional[Dict[str, Any]], t
 
     conn = get_conn()
     try:
-        with conn.cursor() as cur:
+        cur = conn.cursor()
+        try:
             cur.execute(sql, params)
             out = []
             for r in cur.fetchall():
@@ -178,8 +181,11 @@ def image_vector_search(image_bytes: bytes, filters: Optional[Dict[str, Any]], t
                     "distance": float(r[5]),
                 })
             return out
+        finally:
+            cur.close()
     finally:
         put_conn(conn)
+
 
 def init_vertex():
     _ensure_vertex()
