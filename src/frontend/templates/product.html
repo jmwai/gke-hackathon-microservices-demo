@@ -22,51 +22,33 @@
   </span>
 </div>
 
-<main role="main">
-  <div class="h-product container">
-    <div class="row">
-      <div class="col-md-6">
-        <img class="product-image" alt="" src="{{ $.baseUrl }}{{$.product.Item.Picture}}" />
+<main role="main" class="product-detail-main">
+  <div class="container">
+    <div class="row product-detail-row">
+      <div class="col-lg-6 product-image-container">
+        <div class="product-image-wrapper">
+          <img class="product-image" alt="{{ $.product.Item.Name }}" src="{{ $.baseUrl }}{{$.product.Item.Picture}}" />
+        </div>
       </div>
-      <div class="product-info col-md-5">
-        <div class="product-wrapper">
-
-          <h2>{{ $.product.Item.Name }}</h2>
+      <div class="col-lg-6 product-info">
+        <div class="product-details">
+          <h1 class="product-title">{{ $.product.Item.Name }}</h1>
           <p class="product-price">{{ renderMoney $.product.Price }}</p>
-          <p>{{ $.product.Item.Description }}</p>
+          <p class="product-description">{{ $.product.Item.Description }}</p>
 
-          {{ if $.packagingInfo }}
-          <div class="product-packaging">
-            <h3>Packaging</h3>
-            <span>
-              Weight: {{ if $.packagingInfo.Weight }}{{ $.packagingInfo.Weight }}lb{{ else }}n/a{{ end }}
-            </span>
-            <span>
-              Width: {{ if $.packagingInfo.Width }}{{ $.packagingInfo.Width }}cm{{ else }}n/a{{ end }}
-            </span>
-            <span>
-              Height: {{ if $.packagingInfo.Height }}{{ $.packagingInfo.Height }}cm{{ else }}n/a{{ end }}
-            </span>
-            <span>
-              Depth: {{ if $.packagingInfo.Depth }}{{ $.packagingInfo.Depth }}cm{{ else }}n/a{{ end }}
-            </span>
-          </div>
-          {{ end }}
-
-          <form method="POST" action="{{ $.baseUrl }}/cart">
+          <form method="POST" action="{{ $.baseUrl }}/cart" class="add-to-cart-form">
             <input type="hidden" name="product_id" value="{{$.product.Item.Id}}" />
-            <div class="product-quantity-dropdown">
-              <select name="quantity" id="quantity">
-                <option>1</option>
-                <option>2</option>
-                <option>3</option>
-                <option>4</option>
-                <option>5</option>
-                <option>10</option>
+            <div class="quantity-selector">
+              <select name="quantity" id="quantity" class="quantity-dropdown">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
               </select>
-              <img src="{{ $.baseUrl }}/static/icons/Hipster_DownArrow.svg" alt="">
             </div>
-            <button type="submit" class="cymbal-button-primary">Add To Cart</button>
+            <button type="submit" class="add-to-cart-btn">Add To Cart</button>
           </form>
         </div>
       </div>

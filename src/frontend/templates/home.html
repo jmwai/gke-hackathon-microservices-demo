@@ -44,14 +44,14 @@
           </div>
 
           {{ range $.products }}
-          <div class="col-6 col-md-4 col-lg-3 col-xl-2 hot-product-card" style="display:flex; flex-direction:column; align-items:center;">
+          <div class="col-12 col-md-6 col-lg-4 hot-product-card" style="display:flex; flex-direction:column; align-items:center;">
             <a href="{{ $.baseUrl }}/product/{{.Item.Id}}" style="display:block; text-decoration:none; color:inherit; width:100%;">
               <div class="hot-product-card-img" style="position:relative; width:100%; max-width:320px; margin:0 auto; aspect-ratio: 1 / 1; overflow:hidden; border-radius:24px; background:#f5f5f7;">
-                <img loading="lazy" decoding="async" fetchpriority="low" src="{{ $.baseUrl }}{{.Item.Picture}}" alt="{{ .Item.Name }}" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; image-rendering:auto;" />
+                <img loading="lazy" decoding="async" fetchpriority="low" src="{{ $.baseUrl }}{{.Item.Picture}}" alt="{{ .Item.Name }}" style="position:absolute; inset:0; display:block; image-rendering:auto;" />
                 <div class="hot-product-card-img-overlay"></div>
               </div>
             </a>
-            <div style="width:100%; max-width:320px; margin:0 auto;">
+            <div style="width:100%; max-width:320px; margin:0 auto; text-align:left; margin-top:12px;">
               <div class="hot-product-card-name">{{ .Item.Name }}</div>
               <div class="hot-product-card-price">{{ renderMoney .Price }}</div>
             </div>

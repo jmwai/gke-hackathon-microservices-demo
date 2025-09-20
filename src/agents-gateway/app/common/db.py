@@ -148,7 +148,19 @@ class AlloyDBConnectionPool:
 
 
 def get_conn():
-    return init_pool().getconn()
+    conn = init_pool().getconn()
+    # Ensure autocommit and clean transaction state to avoid 25P02 issues
+    try:
+        if hasattr(conn, "autocommit"):
+            conn.autocommit = True  # works for psycopg2 and pg8000
+    except Exception:
+        pass
+    # Best-effort rollback in case the connection was returned in an aborted state
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+    return conn
 
 
 def put_conn(conn) -> None:

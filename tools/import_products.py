@@ -7,6 +7,10 @@ Features
   - local: generate src/productcatalogservice/products.json (no GCP)
   - gcp: upload images to GCS, upsert products into AlloyDB, create text + image embeddings
 
+Default behavior
+- Footwear-only indexing: Only products whose category or sub_category contains
+  the word "footwear" (case-insensitive) are processed.
+
 Assumptions
 - Region: europe-west1
 - Image embeddings: Vertex AI multimodalembedding@001 (vector size 1408)
@@ -178,6 +182,15 @@ def derive_categories(category: Optional[str], sub_category: Optional[str]) -> L
         if sc and sc not in cats:
             cats.append(sc)
     return cats
+
+
+def is_footwear_item(obj: Dict[str, Any]) -> bool:
+    """Return True if item's category or sub_category contains 'footwear'."""
+    cats = derive_categories(
+        normalize_string(obj.get("category")),
+        normalize_string(obj.get("sub_category")),
+    )
+    return any("footwear" in c for c in cats)
 
 
 def choose_primary_image(images: Any) -> Optional[str]:
@@ -430,6 +443,10 @@ def run_local(args: argparse.Namespace) -> None:
     import requests  # type: ignore
 
     for obj in stream_flipkart_items(args.input, scan_limit, args.seed):
+        # Default footwear-only filtering
+        if not is_footwear_item(obj):
+            _log("Skip local: not footwear")
+            continue
         pid = obj.get("pid") or obj.get("_id")
         title = normalize_string(obj.get("title"))
         desc = normalize_string(obj.get("description"))
@@ -554,6 +571,11 @@ def run_gcp(args: argparse.Namespace) -> None:
             if not pid or pid in seen_in_run:
                 continue
             seen_in_run.add(pid)
+
+            # Default footwear-only filtering
+            if not is_footwear_item(obj):
+                _log(f"Skip gcp: not footwear id={pid}")
+                continue
 
             # Skip if already present in DB
             if product_exists(conn, pid):

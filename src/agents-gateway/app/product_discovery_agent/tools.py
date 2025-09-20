@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import tempfile
+import logging
+from timeit import default_timer as timer
 from typing import Any, Dict, List, Optional
+import base64
+from decimal import Decimal
 
 from fastapi import HTTPException
 
@@ -95,45 +99,78 @@ def text_vector_search(query: str, filters: Optional[Dict[str, Any]], top_k: int
     Returns:
         A list of products matching the search query.
     """
-    vec = _embed_text_1408(query)
-    qvec = vector_literal(vec)
-    where = []
-    # Start params list with the vector, which is now parameterized
-    params: List[Any] = [qvec]
-    if filters:
-        cat = filters.get("category") if isinstance(filters, dict) else None
-        if cat:
-            where.append("categories ILIKE %s")
-            params.append(f"%{cat}%")
-    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
-    sql = (
-        "SELECT id, name, description, picture, COALESCE(product_image_url, picture) as product_image_url, "
-        "(product_embedding <=> %s::vector) AS distance "  # Use %s placeholder
-        "FROM catalog_items"
-        + where_sql +
-        " ORDER BY distance ASC LIMIT %s"
-    )
-    params.append(top_k)
-
-    conn = get_conn()
+    start_time = timer()
+    result_count = 0
+    out: List[Dict[str, Any]] = []
+    print(
+        f"DEBUG: text_vector_search called with query='{query}', filters={filters}, top_k={top_k}")
     try:
-        cur = conn.cursor()
+        vec = _embed_text_1408(query)
+        qvec = vector_literal(vec)
+        where = []
+        # Start params list with the vector, which is now parameterized
+        params: List[Any] = [qvec]
+        if filters:
+            cat = filters.get("category") if isinstance(
+                filters, dict) else None
+            if cat:
+                where.append("categories ILIKE %s")
+                params.append(f"%{cat}%")
+        where.append("product_embedding IS NOT NULL")
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+        sql = (
+            "SELECT id, name, description, picture, COALESCE(product_image_url, picture) as product_image_url, "
+            "COALESCE((price_usd_units + (price_usd_nanos/1000000000.0))::float8, 0.0) AS price, "
+            "(product_embedding <=> %s::vector) AS distance "
+            "FROM catalog_items"
+            + where_sql +
+            " ORDER BY distance ASC LIMIT %s"
+        )
+        params.append(top_k)
+
+        conn = get_conn()
         try:
-            cur.execute(sql, params)
-            out = []
-            for r in cur.fetchall():
-                out.append({
-                    "id": r[0],
-                    "name": r[1],
-                    "picture": r[3],
-                    "product_image_url": r[4],
-                    "distance": float(r[5]),
-                })
-            return out
+            cur = conn.cursor()
+            try:
+                cur.execute(sql, params)
+                for r in cur.fetchall():
+                    price_val = r[5]
+                    if isinstance(price_val, Decimal):
+                        price_num = float(price_val)
+                    elif isinstance(price_val, (int, float)):
+                        price_num = float(price_val)
+                    else:
+                        try:
+                            price_num = float(
+                                price_val) if price_val is not None else 0.0
+                        except Exception:
+                            price_num = 0.0
+
+                    out.append({
+                        "id": r[0],
+                        "name": r[1],
+                        "description": r[2],
+                        "picture": r[3],
+                        "product_image_url": r[4],
+                        "price": price_num,
+                        "distance": float(r[6]),
+                    })
+                    result_count += 1
+            finally:
+                cur.close()
         finally:
-            cur.close()
+            put_conn(conn)
     finally:
-        put_conn(conn)
+        elapsed_ms = (timer() - start_time) * 1000.0
+        logging.getLogger("agents.vector_search").info(
+            "text_vector_search completed in %.2f ms (top_k=%s, results=%s)",
+            elapsed_ms,
+            top_k,
+            result_count,
+        )
+        print(
+            f"DEBUG: text_vector_search returning {result_count} results: {out}")
+    return out
 
 
 def image_vector_search(image_bytes: bytes, filters: Optional[Dict[str, Any]], top_k: int) -> List[Dict[str, Any]]:
@@ -176,6 +213,7 @@ def image_vector_search(image_bytes: bytes, filters: Optional[Dict[str, Any]], t
                 out.append({
                     "id": r[0],
                     "name": r[1],
+                    "description": r[2],
                     "picture": r[3],
                     "product_image_url": r[4],
                     "distance": float(r[5]),
@@ -191,11 +229,24 @@ def init_vertex():
     _ensure_vertex()
 
 
-# ADK FunctionTool wrappers
-text_search_tool = FunctionTool(
-    text_vector_search,
-)
+# ADK FunctionTool wrappers with defaults and clamping (Product Discovery wants 20)
+def pd_text_search(query: str, filters: Dict[str, Any], top_k: int) -> List[Dict[str, Any]]:
+    s = get_settings()
+    k = max(1, min(int(top_k), s.API_TOP_K_MAX))
+    return text_vector_search(query, filters or {}, k)
 
-image_search_tool = FunctionTool(
-    image_vector_search,
-)
+
+def pd_image_search(image_base64: str, mime_type: str, top_k: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    # Decode base64 string to bytes; mime_type is currently unused but kept for schema clarity
+    try:
+        image_bytes = base64.b64decode(image_base64)
+    except Exception:
+        raise HTTPException(
+            status_code=400, detail="Invalid image_base64 data")
+    s = get_settings()
+    k = max(1, min(int(top_k), s.API_TOP_K_MAX))
+    return image_vector_search(image_bytes, filters or {}, k)
+
+
+text_search_tool = FunctionTool(pd_text_search)
+image_search_tool = FunctionTool(pd_image_search)

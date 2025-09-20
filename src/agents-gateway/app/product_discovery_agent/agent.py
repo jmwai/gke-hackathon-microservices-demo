@@ -31,7 +31,9 @@ root_agent = LlmAgent(
     description="Responds to natural language queries about products by using text-based search or image-based vector search.",
     instruction=product_discovery.INSTRUCTION,
     model=GEMINI_MODEL,
-    tools=[text_search_tool],
+    tools=[text_search_tool, image_search_tool],
     output_schema=ProductSearchOutput,
-    output_key="search_results"
+    output_key="search_results",
+    disallow_transfer_to_parent=True,
+    disallow_transfer_to_peers=True
 )

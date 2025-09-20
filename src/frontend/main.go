@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"cloud.google.com/go/profiler"
@@ -85,6 +86,10 @@ type frontendServer struct {
 	collectorConn *grpc.ClientConn
 
 	shoppingAssistantSvcAddr string
+
+	agentsGatewaySvcAddr string
+	useAgentsGateway     bool
+	migrationPercent     int
 }
 
 func main() {
@@ -137,6 +142,13 @@ func main() {
 	mustMapEnv(&svc.adSvcAddr, "AD_SERVICE_ADDR")
 	mustMapEnv(&svc.shoppingAssistantSvcAddr, "SHOPPING_ASSISTANT_SERVICE_ADDR")
 
+	// Agent gateway configuration
+	mustMapEnv(&svc.agentsGatewaySvcAddr, "AGENTS_GATEWAY_SERVICE_ADDR")
+	svc.useAgentsGateway = os.Getenv("USE_AGENTS_GATEWAY") == "true"
+	if percent := os.Getenv("AGENT_MIGRATION_PERCENT"); percent != "" {
+		svc.migrationPercent, _ = strconv.Atoi(percent)
+	}
+
 	mustConnGRPC(ctx, &svc.currencySvcConn, svc.currencySvcAddr)
 	mustConnGRPC(ctx, &svc.productCatalogSvcConn, svc.productCatalogSvcAddr)
 	mustConnGRPC(ctx, &svc.cartSvcConn, svc.cartSvcAddr)
@@ -162,6 +174,11 @@ func main() {
 	r.HandleFunc(baseUrl+"/_healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") })
 	r.HandleFunc(baseUrl+"/product-meta/{ids}", svc.getProductByID).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl+"/bot", svc.chatBotHandler).Methods(http.MethodPost)
+	// Agent tools HTTP endpoints
+	r.HandleFunc(baseUrl+"/api/cart", svc.apiGetCart).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/api/cart/add", svc.apiAddToCart).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/api/cart/remove", svc.apiRemoveFromCart).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/api/checkout", svc.apiCheckout).Methods(http.MethodPost)
 	r.HandleFunc(baseUrl+"/api/agent-search", svc.agentSearchHandler).Methods(http.MethodPost, http.MethodOptions)
 	r.HandleFunc(baseUrl+"/api/search", svc.fallbackSearchHandler).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl+"/api/feature-flags", svc.featureFlagsHandler).Methods(http.MethodGet)

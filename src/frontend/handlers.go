@@ -15,9 +15,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"html/template"
 	"io"
 	"math/rand"
@@ -613,27 +615,326 @@ func (fe *frontendServer) getProductByID(w http.ResponseWriter, r *http.Request)
 }
 
 func (fe *frontendServer) chatBotHandler(w http.ResponseWriter, r *http.Request) {
-	// Check if we should use the enhanced agent-based assistant
-	if fe.shouldUseAgentAssistant() {
-		fe.enhancedChatBotHandler(w, r)
+	log := r.Context().Value(ctxKeyLog{}).(logrus.FieldLogger)
+
+	// Determine which system to use based on gradual migration
+	sessionId := sessionID(r)
+	useNewAgents := fe.shouldUseAgentsGateway(sessionId)
+
+	if useNewAgents {
+		fe.handleChatWithAgents(w, r, log)
+	} else {
+		fe.legacyChatBotHandler(w, r)
+	}
+}
+
+func (fe *frontendServer) handleChatWithAgents(w http.ResponseWriter, r *http.Request, log logrus.FieldLogger) {
+	type ChatRequest struct {
+		Message string `json:"message"`
+		Image   string `json:"image,omitempty"`
+	}
+
+	type ChatResponse struct {
+		Message     string                   `json:"message"`
+		Products    []map[string]interface{} `json:"products,omitempty"`
+		SessionId   string                   `json:"session_id,omitempty"`
+		Suggestions []string                 `json:"suggestions,omitempty"`
+	}
+
+	// Parse request
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.WithField("error", err).Error("failed to decode chat request")
+		fe.legacyChatBotHandler(w, r)
 		return
 	}
 
-	// Fallback to legacy shopping assistant
-	fe.legacyChatBotHandler(w, r)
+	// Prepare agent parts
+	parts := []AgentPart{{Text: req.Message}}
+	if req.Image != "" && req.Image != "undefined" {
+		// Handle base64 image data
+		imageData := req.Image
+		if strings.Contains(imageData, ",") {
+			imageData = strings.Split(imageData, ",")[1]
+		}
+		// Note: We'd need to decode the base64 here for proper image handling
+		parts = append(parts, AgentPart{Text: "Image provided (processing not fully implemented)"})
+	}
+
+	// Use the same two-step process as search
+	userId := sessionID(r)
+	if userId == "" {
+		userId = "user_" + fmt.Sprintf("%x", rand.Uint32())
+	}
+
+	// Step 1: Create agent request using same pattern as search
+	searchReq := SearchRequest{
+		AppName:   "shopping_assistant_agent",
+		UserId:    userId,
+		SessionId: "", // Will be set after session creation
+		NewMessage: map[string]interface{}{
+			"role": "user",
+			"parts": []map[string]interface{}{
+				{"text": req.Message},
+			},
+		},
+	}
+
+	// Add image if provided
+	if req.Image != "" && req.Image != "undefined" {
+		imageData := req.Image
+		if strings.Contains(imageData, ",") {
+			imageData = strings.Split(imageData, ",")[1]
+		}
+		searchReq.NewMessage["parts"] = append(
+			searchReq.NewMessage["parts"].([]map[string]interface{}),
+			map[string]interface{}{
+				"inlineData": map[string]interface{}{
+					"data":     imageData,
+					"mimeType": "image/jpeg",
+				},
+			},
+		)
+	}
+
+	// Step 2: Use the same agents-gateway communication pattern as search
+	agentGatewayBaseURL := "http://agents-gateway:80"
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// Create session first (same as search)
+	sessionURL := fmt.Sprintf("%s/apps/%s/users/%s/sessions", agentGatewayBaseURL, searchReq.AppName, searchReq.UserId)
+	sessionReqBody := map[string]string{
+		"appName": searchReq.AppName,
+		"userId":  searchReq.UserId,
+	}
+	sessionJSON, _ := json.Marshal(sessionReqBody)
+
+	sessionResp, err := client.Post(sessionURL, "application/json", strings.NewReader(string(sessionJSON)))
+	if err != nil {
+		log.WithField("error", err).Error("failed to create session with agents-gateway for assistant")
+		fe.legacyChatBotHandler(w, r)
+		return
+	}
+	defer sessionResp.Body.Close()
+
+	var sessionData map[string]interface{}
+	if err := json.NewDecoder(sessionResp.Body).Decode(&sessionData); err != nil {
+		log.WithField("error", err).Error("failed to parse session response for assistant")
+		fe.legacyChatBotHandler(w, r)
+		return
+	}
+
+	// Use the session ID from the agents-gateway response
+	if sessionId, ok := sessionData["id"].(string); ok {
+		searchReq.SessionId = sessionId
+	}
+
+	// Now make the actual assistant request (same as search)
+	agentGatewayURL := agentGatewayBaseURL + "/run"
+	requestJSON, _ := json.Marshal(searchReq)
+
+	log.WithField("payload", string(requestJSON)).Info("Forwarding assistant request to agents-gateway")
+
+	agentReq, err := http.NewRequest(http.MethodPost, agentGatewayURL, strings.NewReader(string(requestJSON)))
+	if err != nil {
+		log.WithField("error", err).Error("failed to create agent request for assistant")
+		fe.legacyChatBotHandler(w, r)
+		return
+	}
+
+	agentReq.Header.Set("Content-Type", "application/json")
+	agentReq.Header.Set("Accept", "application/json")
+
+	// Execute the request
+	resp, err := client.Do(agentReq)
+	if err != nil {
+		log.WithField("error", err).Error("assistant agent request failed")
+		fe.legacyChatBotHandler(w, r)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.WithField("status", resp.StatusCode).Error("assistant agent returned error")
+		fe.legacyChatBotHandler(w, r)
+		return
+	}
+
+	// Read and parse agent response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.WithField("error", err).Error("failed to read assistant agent response")
+		fe.legacyChatBotHandler(w, r)
+		return
+	}
+
+	// Log response snippet for debugging
+	respSnippet := string(body)
+	if len(respSnippet) > 1000 {
+		respSnippet = respSnippet[:1000] + "..."
+	}
+	log.WithField("response_body", respSnippet).Info("Agent response received")
+
+	// Try to decode as object first, then as array if that fails
+	var agentResponse map[string]interface{}
+	if err := json.NewDecoder(strings.NewReader(string(body))).Decode(&agentResponse); err != nil {
+		// If object decode fails, try as array (agents-gateway sometimes returns arrays)
+		var arrayResponse []interface{}
+		if err2 := json.NewDecoder(strings.NewReader(string(body))).Decode(&arrayResponse); err2 != nil {
+			log.WithField("error", err).WithField("body", string(body)).Error("failed to decode assistant agent response as object or array")
+			fe.legacyChatBotHandler(w, r)
+			return
+		}
+		// First pass: scan all array elements for functionResponse with products
+		if len(arrayResponse) > 0 {
+			aggProducts := make([]map[string]interface{}, 0)
+			messageBuilder := strings.Builder{}
+			for _, elem := range arrayResponse {
+				obj, ok := elem.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if content, ok := obj["content"].(map[string]interface{}); ok {
+					if parts, ok := content["parts"].([]interface{}); ok {
+						for _, p := range parts {
+							if partMap, ok := p.(map[string]interface{}); ok {
+								if txt, ok := partMap["text"].(string); ok {
+									messageBuilder.WriteString(txt)
+									messageBuilder.WriteString(" ")
+								}
+								if funcResp, ok := partMap["functionResponse"].(map[string]interface{}); ok {
+									if resp, ok := funcResp["response"]; ok {
+										aggProducts = append(aggProducts, fe.extractProductsFromFunctionResponse(resp)...)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			if len(aggProducts) > 0 {
+				msg := strings.TrimSpace(messageBuilder.String())
+				if msg == "" {
+					msg = "I found some products that might interest you!"
+				}
+				response := ChatResponse{Message: msg, Products: aggProducts, SessionId: userId, Suggestions: []string{}}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(response)
+				log.WithField("products_count", len(aggProducts)).Info("Assistant request completed via agents-gateway (from array scan)")
+				return
+			}
+
+			// Fallback: convert array response to object format for parsing
+			// Prefer the LAST element; ADK often appends final state at the end
+			last := arrayResponse[len(arrayResponse)-1]
+			if objResp, ok := last.(map[string]interface{}); ok {
+				agentResponse = objResp
+			} else if first, ok := arrayResponse[0].(map[string]interface{}); ok {
+				// Fallback to first if last isn't an object
+				agentResponse = first
+			} else {
+				log.WithField("body", string(body)).Error("unexpected array response format from agent")
+				fe.legacyChatBotHandler(w, r)
+				return
+			}
+		} else {
+			log.Error("empty array response from agent")
+			fe.legacyChatBotHandler(w, r)
+			return
+		}
+	}
+
+	// Extract message and products from agent response
+	message, products := fe.parseAgentAssistantResponse(agentResponse)
+
+	response := ChatResponse{
+		Message:     message,
+		Products:    products,
+		SessionId:   userId,
+		Suggestions: []string{},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+
+	log.WithField("products_count", len(products)).Info("Assistant request completed via agents-gateway")
 }
 
 func (fe *frontendServer) shouldUseAgentAssistant() bool {
-	// Check environment variable
-	if os.Getenv("AGENT_ASSISTANT_DISABLED") == "true" {
-		return false
+	// Keep for backward compatibility, but prefer shouldUseAgentsGateway.
+	return fe.useAgentsGateway
+}
+
+// Agent communication client
+func (fe *frontendServer) callAgentsGateway(ctx context.Context, req AgentRequest) (*AgentResponse, error) {
+	url := "http://" + fe.agentsGatewaySvcAddr + "/run"
+
+	jsonData, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
 	}
-	if os.Getenv("ASSISTANT_LEGACY_ONLY") == "true" {
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var agentResp AgentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&agentResp); err != nil {
+		return nil, err
+	}
+
+	return &agentResp, nil
+}
+
+// Fallback mechanism with gradual migration
+func (fe *frontendServer) shouldUseAgentsGateway(sessionID string) bool {
+	if !fe.useAgentsGateway {
 		return false
 	}
 
-	// Default to agent assistant enabled
+	// Implement percentage-based rollout
+	if fe.migrationPercent > 0 {
+		hash := fnv.New32a()
+		hash.Write([]byte(sessionID))
+		return int(hash.Sum32()%100) < fe.migrationPercent
+	}
+
 	return true
+}
+
+// Fallback to legacy services
+func (fe *frontendServer) callAgentWithFallback(ctx context.Context, req AgentRequest) (*AgentResponse, error) {
+	log := ctx.Value(ctxKeyLog{}).(logrus.FieldLogger)
+
+	// Try agents-gateway first
+	resp, err := fe.callAgentsGateway(ctx, req)
+	if err != nil {
+		// Log the error
+		log.WithError(err).Warn("agents-gateway unavailable, falling back to legacy services")
+
+		// Fallback to existing services
+		return fe.fallbackToLegacyServices(ctx, req)
+	}
+	return resp, nil
+}
+
+func (fe *frontendServer) fallbackToLegacyServices(ctx context.Context, req AgentRequest) (*AgentResponse, error) {
+	// For now, return a basic response indicating fallback
+	// This can be enhanced to route to appropriate legacy services
+	return &AgentResponse{
+		Content: "I'm sorry, our advanced assistant is temporarily unavailable. Please try again later.",
+		Error:   "agents-gateway-unavailable",
+	}, nil
 }
 
 func (fe *frontendServer) enhancedChatBotHandler(w http.ResponseWriter, r *http.Request) {
@@ -829,25 +1130,98 @@ func (fe *frontendServer) parseAgentAssistantResponse(agentResponse map[string]i
 	message := ""
 	var products []map[string]interface{}
 
-	// Parse agent response to extract message and product recommendations
-	if candidates, ok := agentResponse["candidates"].([]interface{}); ok && len(candidates) > 0 {
-		if candidate, ok := candidates[0].(map[string]interface{}); ok {
-			if content, ok := candidate["content"].(map[string]interface{}); ok {
-				if parts, ok := content["parts"].([]interface{}); ok {
-					for _, part := range parts {
-						if partMap, ok := part.(map[string]interface{}); ok {
-							// Extract text message
-							if text, ok := partMap["text"].(string); ok {
-								message += text + " "
-							}
+	log.WithField("agent_response_keys", getMapKeys(agentResponse)).Info("Parsing agent assistant response")
 
-							// Extract function responses that might contain products
-							if funcResp, ok := partMap["functionResponse"].(map[string]interface{}); ok {
-								if funcName, ok := funcResp["name"].(string); ok {
-									if funcName == "text_vector_search" || funcName == "get_recommendations" {
-										if response, ok := funcResp["response"]; ok {
-											products = append(products, fe.extractProductsFromFunctionResponse(response)...)
-										}
+	// Handle structured output from shopping_assistant_agent
+	if shoppingRecs, ok := agentResponse["shopping_recommendations"].(map[string]interface{}); ok {
+		log.Info("Found 'shopping_recommendations' key, parsing structured output.")
+		// Optional action-aware parsing (recommend/cart/order)
+		if action, ok := shoppingRecs["action"].(string); ok {
+			// Set message from top-level summary if present
+			if sum, ok := shoppingRecs["summary"].(string); ok && sum != "" {
+				message = sum
+			}
+			if action == "recommend" {
+				if recs, ok := shoppingRecs["recommendations"].([]interface{}); ok {
+					for _, rec := range recs {
+						if recMap, ok := rec.(map[string]interface{}); ok {
+							products = append(products, normalizeProductMap(recMap))
+						}
+					}
+				}
+			} else if strings.HasPrefix(action, "cart_") {
+				if cart, ok := shoppingRecs["cart"].(map[string]interface{}); ok {
+					// Build light-weight product list from cart items if available
+					if items, ok := cart["items"].([]interface{}); ok {
+						for _, it := range items {
+							if itm, ok := it.(map[string]interface{}); ok {
+								idVal := itm["product_id"]
+								nameVal := itm["name"]
+								products = append(products, map[string]interface{}{
+									"id":          idVal,
+									"name":        nameVal,
+									"description": "",
+									"picture":     "",
+								})
+							}
+						}
+					}
+				}
+			} else if action == "order_submit" {
+				// Show confirmation message; products remain empty
+			}
+		}
+		// Extract recommendation summary as message
+		if summary, ok := shoppingRecs["recommendation_summary"].(string); ok {
+			message = summary
+		}
+
+		// Extract product recommendations
+		if recommendations, ok := shoppingRecs["recommendations"].([]interface{}); ok {
+			for _, rec := range recommendations {
+				if recMap, ok := rec.(map[string]interface{}); ok {
+					products = append(products, normalizeProductMap(recMap))
+				}
+			}
+		}
+	} else if searchResults, ok := agentResponse["search_results"].(map[string]interface{}); ok {
+		// Handle structured output from product_discovery_agent.
+		log.Info("Found 'search_results' key, parsing structured output.")
+		if summary, ok := searchResults["summary"].(string); ok {
+			message = summary
+		}
+		if productList, ok := searchResults["products"].([]interface{}); ok {
+			for _, p := range productList {
+				if pMap, ok := p.(map[string]interface{}); ok {
+					products = append(products, normalizeProductMap(pMap))
+				}
+			}
+		}
+	} else {
+		// For agents without output_schema, parse raw ADK response with functionResponse
+		// Fallback for older ADK format if the structured output is not found
+		log.Info("Did not find 'shopping_recommendations' key, attempting to parse legacy ADK format.")
+		if candidates, ok := agentResponse["candidates"].([]interface{}); ok && len(candidates) > 0 {
+			for _, cand := range candidates {
+				candidate, ok := cand.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if content, ok := candidate["content"].(map[string]interface{}); ok {
+					if parts, ok := content["parts"].([]interface{}); ok {
+						for _, part := range parts {
+							if partMap, ok := part.(map[string]interface{}); ok {
+								// Extract text message and parse embedded JSON products
+								if text, ok := partMap["text"].(string); ok {
+									message += text + " "
+									products = append(products, parseProductsFromJSONString(text)...)
+								}
+								// Extract function responses that might contain products
+								if funcResp, ok := partMap["functionResponse"].(map[string]interface{}); ok {
+									if response, ok := funcResp["response"]; ok {
+										products = append(products, fe.extractProductsFromFunctionResponse(response)...)
+									} else if respStr, ok := funcResp["response"].(string); ok {
+										products = append(products, parseProductsFromJSONString(respStr)...)
 									}
 								}
 							}
@@ -856,15 +1230,29 @@ func (fe *frontendServer) parseAgentAssistantResponse(agentResponse map[string]i
 				}
 			}
 		}
+
+		// Deep fallback: scan any nested structures for product-like maps
+		if len(products) == 0 {
+			products = append(products, extractProductsFromAny(agentResponse)...)
+		}
 	}
 
 	// Clean up message
 	message = strings.TrimSpace(message)
-	if message == "" {
+	if message == "" && len(products) > 0 {
 		message = "I found some products that might interest you!"
 	}
 
 	return message, products
+}
+
+// Helper function to get keys from a map for logging
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func (fe *frontendServer) extractProductsFromFunctionResponse(response interface{}) []map[string]interface{} {
@@ -877,31 +1265,87 @@ func (fe *frontendServer) extractProductsFromFunctionResponse(response interface
 		for _, item := range resp {
 			if product, ok := item.(map[string]interface{}); ok {
 				// Ensure required fields exist
-				if id, hasId := product["id"]; hasId {
-					productMap := map[string]interface{}{
-						"id":          id,
-						"name":        product["name"],
-						"description": product["description"],
-						"picture":     product["picture"],
-					}
-					products = append(products, productMap)
+				if _, hasId := product["id"]; hasId {
+					products = append(products, normalizeProductMap(product))
 				}
 			}
 		}
 	case map[string]interface{}:
 		// Single product
-		if id, hasId := resp["id"]; hasId {
-			productMap := map[string]interface{}{
-				"id":          id,
-				"name":        resp["name"],
-				"description": resp["description"],
-				"picture":     resp["picture"],
-			}
-			products = append(products, productMap)
+		if _, hasId := resp["id"]; hasId {
+			products = append(products, normalizeProductMap(resp))
 		}
 	}
 
 	return products
+}
+
+// parseProductsFromJSONString tries to parse a JSON string and extract products arrays
+func parseProductsFromJSONString(s string) []map[string]interface{} {
+	var out []map[string]interface{}
+	trim := strings.TrimSpace(s)
+	if trim == "" {
+		return out
+	}
+	// Only try to parse likely JSON payloads
+	if !(strings.HasPrefix(trim, "{") || strings.HasPrefix(trim, "[")) {
+		return out
+	}
+	var any interface{}
+	if err := json.Unmarshal([]byte(trim), &any); err != nil {
+		return out
+	}
+	return extractProductsFromAny(any)
+}
+
+// extractProductsFromAny recursively scans for arrays/maps that look like products
+func extractProductsFromAny(v interface{}) []map[string]interface{} {
+	var collected []map[string]interface{}
+	switch val := v.(type) {
+	case []interface{}:
+		for _, item := range val {
+			collected = append(collected, extractProductsFromAny(item)...)
+		}
+	case map[string]interface{}:
+		// If this map looks like a product, add it
+		if isProductMap(val) {
+			collected = append(collected, normalizeProductMap(val))
+		}
+		// If it contains a key named "products" with an array, use that
+		if arr, ok := val["products"].([]interface{}); ok {
+			for _, p := range arr {
+				if pm, ok := p.(map[string]interface{}); ok {
+					collected = append(collected, normalizeProductMap(pm))
+				}
+			}
+		}
+		for _, nested := range val {
+			collected = append(collected, extractProductsFromAny(nested)...)
+		}
+	}
+	return collected
+}
+
+func isProductMap(m map[string]interface{}) bool {
+	_, hasID := m["id"]
+	_, hasName := m["name"]
+	return hasID && hasName
+}
+
+func normalizeProductMap(m map[string]interface{}) map[string]interface{} {
+	// Normalize picture field from product_image_url if needed
+	picture := m["picture"]
+	if picture == nil || picture == "" {
+		if piu, ok := m["product_image_url"]; ok {
+			picture = piu
+		}
+	}
+	return map[string]interface{}{
+		"id":          m["id"],
+		"name":        m["name"],
+		"description": m["description"],
+		"picture":     picture,
+	}
 }
 
 func (fe *frontendServer) agentSearchHandler(w http.ResponseWriter, r *http.Request) {
@@ -1664,6 +2108,102 @@ func (fe *frontendServer) setCurrencyHandler(w http.ResponseWriter, r *http.Requ
 	}
 	w.Header().Set("Location", referer)
 	w.WriteHeader(http.StatusFound)
+}
+
+// ===================== Agent Tool HTTP Endpoints (Option A) =====================
+
+// GET /api/cart?userId=...
+func (fe *frontendServer) apiGetCart(w http.ResponseWriter, r *http.Request) {
+	userId := r.URL.Query().Get("userId")
+	if userId == "" {
+		userId = sessionID(r)
+	}
+	cart, err := fe.getCart(r.Context(), userId)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{"error": "cart_fetch_failed"})
+		return
+	}
+	items := make([]map[string]any, 0, len(cart))
+	for _, it := range cart {
+		items = append(items, map[string]any{
+			"product_id": it.GetProductId(),
+			"name":       it.GetProductId(),
+			"quantity":   it.GetQuantity(),
+		})
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"cart_id":     userId,
+		"items":       items,
+		"total_price": "",
+	})
+}
+
+// POST /api/cart/add {userId, productId, quantity}
+func (fe *frontendServer) apiAddToCart(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserId    string `json:"userId"`
+		ProductId string `json:"productId"`
+		Quantity  int32  `json:"quantity"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"error": "bad_request"})
+		return
+	}
+	if req.UserId == "" {
+		req.UserId = sessionID(r)
+	}
+	if req.Quantity <= 0 {
+		req.Quantity = 1
+	}
+	if err := fe.insertCart(r.Context(), req.UserId, req.ProductId, req.Quantity); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{"error": "add_failed"})
+		return
+	}
+	fe.apiGetCart(w, r.WithContext(r.Context()))
+}
+
+// POST /api/cart/remove {userId, productId}
+func (fe *frontendServer) apiRemoveFromCart(w http.ResponseWriter, r *http.Request) {
+	var req struct{ UserId, ProductId string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"error": "bad_request"})
+		return
+	}
+	if req.UserId == "" {
+		req.UserId = sessionID(r)
+	}
+	// Simple implementation: empty cart then re-add everything except ProductId (for demo keep as no-op)
+	// Real impl would call a RemoveItem RPC.
+	json.NewEncoder(w).Encode(map[string]any{"status": "not_implemented"})
+}
+
+// POST /api/checkout {userId, userDetails{name,address}, paymentInfo{last4}}
+func (fe *frontendServer) apiCheckout(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserId      string                         `json:"userId"`
+		UserDetails struct{ Name, Address string } `json:"userDetails"`
+		PaymentInfo struct{ Last4 string }         `json:"paymentInfo"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"error": "bad_request"})
+		return
+	}
+	if req.UserId == "" {
+		req.UserId = sessionID(r)
+	}
+	// For demo, return a synthetic confirmation
+	json.NewEncoder(w).Encode(map[string]any{
+		"order_id":           "ORDER-" + fmt.Sprintf("%x", rand.Uint32()),
+		"status":             "success",
+		"tracking_id":        fmt.Sprintf("1Z%x", rand.Uint32()),
+		"estimated_delivery": time.Now().Add(48 * time.Hour).Format("2006-01-02"),
+		"message":            "Your order has been placed successfully!",
+	})
 }
 
 // chooseAd queries for advertisements available and randomly chooses one, if

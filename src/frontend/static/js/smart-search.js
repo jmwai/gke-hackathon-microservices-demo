@@ -20,6 +20,8 @@ class SmartSearch {
         this.searchInput = document.getElementById('smart-search-input');
         this.loadingIndicator = document.getElementById('search-loading');
         this.suggestionsContainer = document.querySelector('.smart-search-suggestions');
+        this.cameraButton = document.getElementById('smart-search-camera');
+        this.imageInput = document.getElementById('smart-search-image');
     }
 
     bindEvents() {
@@ -38,6 +40,38 @@ class SmartSearch {
                 this.navigateToSearchWithQuery(query);
             });
         });
+
+        // Camera button -> open file picker
+        if (this.cameraButton && this.imageInput) {
+            this.cameraButton.addEventListener('click', () => {
+                this.imageInput.click();
+            });
+
+            this.imageInput.addEventListener('change', async (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (!file) return;
+                const maxBytes = 4 * 1024 * 1024; // 4MB
+                const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+                if (!allowed.includes(file.type)) {
+                    alert('Please select a JPEG, PNG, or WEBP image.');
+                    return;
+                }
+                if (file.size > maxBytes) {
+                    alert('Image too large. Please select an image under 4 MB.');
+                    return;
+                }
+                try {
+                    const base64 = await this.readFileAsBase64(file);
+                    sessionStorage.setItem('search_image_data', base64);
+                    sessionStorage.setItem('search_image_type', file.type);
+                    // Navigate to search page; image-only mode
+                    window.location.href = '/search';
+                } catch (err) {
+                    console.error('Failed to read image:', err);
+                    alert('Could not read image. Please try a different file.');
+                }
+            });
+        }
     }
 
     async loadFeatureFlags() {
@@ -443,3 +477,22 @@ class SmartSearch {
 document.addEventListener('DOMContentLoaded', () => {
     new SmartSearch();
 });
+
+// Helpers
+SmartSearch.prototype.readFileAsBase64 = function(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            // result is a data URL like "data:<mime>;base64,<data>"
+            const res = reader.result;
+            try {
+                const parts = String(res).split(',');
+                resolve(parts[1]);
+            } catch (e) {
+                resolve(String(res));
+            }
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+};

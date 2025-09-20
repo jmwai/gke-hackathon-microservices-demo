@@ -139,19 +139,23 @@
     console.log("message: " + message);
     const usermessage = document.createElement("p");
     const userMessageSpan = document.createElement("span");
-    const imageDivElement = document.createElement("div");
-    imageDivElement.classList.add("user-image-div")
-    const imageElement = document.createElement("img");
-    imageElement.src = image;
-    imageElement.classList.add("user-image");
-    imageElement.onerror = function() { this.style.display = 'none'; };
     userMessageSpan.innerText = message;
     userMessageSpan.classList.add("user-message-text");
     usermessage.classList.add("user-message");
     usermessage.appendChild(userMessageSpan);
     botMessages.appendChild(usermessage);
-    imageDivElement.appendChild(imageElement);
-    botMessages.appendChild(imageDivElement);
+    
+    // Only add image if one was provided
+    if (image && image !== "undefined") {
+      const imageDivElement = document.createElement("div");
+      imageDivElement.classList.add("user-image-div")
+      const imageElement = document.createElement("img");
+      imageElement.src = image;
+      imageElement.classList.add("user-image");
+      imageElement.onerror = function() { this.style.display = 'none'; };
+      imageDivElement.appendChild(imageElement);
+      botMessages.appendChild(imageDivElement);
+    }
     botMessages.scrollTo(0, botMessages.scrollHeight);
     botinput.value = "";
 
@@ -231,97 +235,141 @@
   async function renderProductsFromData(products) {
     if (!products || products.length === 0) return;
 
-    // Construct root products div
-    const botProductsDiv = document.createElement("div");
-    botProductsDiv.classList.add("bot-products");
+    // List-style container
+    const list = document.createElement("div");
+    list.style.display = 'flex';
+    list.style.flexDirection = 'column';
+    list.style.gap = '12px';
 
-    // For each product...
     for (const product of products) {
-      // Construct main product div
-      const botProductDiv = document.createElement("a");
-      botProductDiv.classList.add("bot-product");
-      botProductDiv.href = "{{ $.baseUrl }}/product/" + product.id;
+      const id = product.id;
 
-      // Construct product image
-      const botProductImg = document.createElement("img");
-      botProductImg.src = product.picture || "/static/img/products/placeholder.jpg";
-      botProductImg.classList.add("bot-product-img");
-      botProductImg.onerror = function() { this.style.display = 'none'; };
-      botProductDiv.appendChild(botProductImg);
+      // Try to fetch price and canonical image/name from product meta
+      let meta = null;
+      try {
+        const res = await fetch("{{ $.baseUrl }}/product-meta/" + id);
+        if (res.ok) meta = await res.json();
+      } catch (_) {}
 
-      // Construct product description div
-      const botProductDescription = document.createElement("div");
-      botProductDescription.classList.add("bot-product-description");
-      let productDescription = product.description || "";
-      if (productDescription.length > 350) { // Shorten descriptions that are too long
-        productDescription = productDescription.substring(0, 330) + '...';
-      }
-      botProductDescription.innerHTML = "<b>" + (product.name || "Unknown Product") + "</b><br>" + productDescription;
-      botProductDiv.appendChild(botProductDescription);
+      const name = (product.name || (meta && meta.name) || 'Unknown Product');
+      const picture = product.picture || product.product_image_url || (meta && meta.picture) || '/static/img/products/placeholder.jpg';
+      const priceText = product.price ? new Intl.NumberFormat('en-US', {style:'currency', currency:'USD'}).format(product.price) : formatPrice(meta);
 
-      // Append main product div into the root products div
-      botProductsDiv.appendChild(botProductDiv);
+      const row = document.createElement('a');
+      row.href = "{{ $.baseUrl }}/product/" + id;
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.gap = '12px';
+      row.style.padding = '10px 12px';
+      row.style.border = '1px solid #eee';
+      row.style.borderRadius = '10px';
+      row.style.textDecoration = 'none';
+      row.style.color = 'inherit';
+
+      const thumb = document.createElement('img');
+      thumb.src = picture;
+      thumb.width = 72; thumb.height = 72;
+      thumb.style.objectFit = 'contain';
+      thumb.style.borderRadius = '8px';
+      thumb.onerror = function(){ this.src = '/static/img/products/placeholder.jpg' };
+
+      const info = document.createElement('div');
+      info.style.display = 'flex';
+      info.style.flexDirection = 'column';
+      info.style.gap = '4px';
+
+      const title = document.createElement('div');
+      title.textContent = name;
+      title.style.fontWeight = '600';
+      title.style.lineHeight = '1.2';
+
+      const price = document.createElement('div');
+      price.textContent = priceText;
+      price.style.color = '#333';
+
+      info.appendChild(title);
+      if (priceText) info.appendChild(price);
+      row.appendChild(thumb);
+      row.appendChild(info);
+      list.appendChild(row);
     }
-    
-    // Render products
-    botMessages.appendChild(botProductsDiv);
+
+    botMessages.appendChild(list);
   }
 
   // Legacy function to render products from IDs (backward compatibility)
   async function renderProductsFromIds(extractedIds) {
-    // Construct root products div
-    const botProductsDiv = document.createElement("div");
-    botProductsDiv.classList.add("bot-products");
+    const list = document.createElement('div');
+    list.style.display = 'flex';
+    list.style.flexDirection = 'column';
+    list.style.gap = '12px';
 
-    // For each product...
     for (const id of extractedIds) {
       try {
-        // Retrieve product metadata from the Product Catalog
-        const productResponse = await fetch("{{ $.baseUrl }}/product-meta/" + id, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        });
-        
-        if (!productResponse.ok) {
-          console.warn(`Failed to fetch product ${id}: ${productResponse.status}`);
-          continue;
-        }
-        
+        const productResponse = await fetch("{{ $.baseUrl }}/product-meta/" + id, { method: 'GET' });
+        if (!productResponse.ok) continue;
         const product = await productResponse.json();
 
-        // Construct main product div
-        const botProductDiv = document.createElement("a");
-        botProductDiv.classList.add("bot-product");
-        botProductDiv.href = "{{ $.baseUrl }}/product/" + id;
+        const name = product.name;
+        const picture = product.picture || '/static/img/products/placeholder.jpg';
+        const priceText = product.price ? new Intl.NumberFormat('en-US', {style:'currency', currency:'USD'}).format(product.price) : formatPrice(product);
 
-        // Construct product image
-        const botProductImg = document.createElement("img");
-        botProductImg.src = product["picture"];
-        botProductImg.classList.add("bot-product-img");
-        botProductImg.onerror = function() { this.style.display = 'none'; };
-        botProductDiv.appendChild(botProductImg);
+        const row = document.createElement('a');
+        row.href = "{{ $.baseUrl }}/product/" + id;
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.gap = '12px';
+        row.style.padding = '10px 12px';
+        row.style.border = '1px solid #eee';
+        row.style.borderRadius = '10px';
+        row.style.textDecoration = 'none';
+        row.style.color = 'inherit';
 
-        // Construct product description div
-        const botProductDescription = document.createElement("div");
-        botProductDescription.classList.add("bot-product-description");
-        let productDescription = product["description"];
-        if (productDescription.length > 350) { // Shorten descriptions that are too long
-          productDescription = productDescription.substring(0, 330) + '...';
-        }
-        botProductDescription.innerHTML = "<b>" + product["name"] + "</b><br>" + productDescription;
-        botProductDiv.appendChild(botProductDescription);
+        const thumb = document.createElement('img');
+        thumb.src = picture; thumb.width = 72; thumb.height = 72;
+        thumb.style.objectFit = 'contain';
+        thumb.style.borderRadius = '8px';
+        thumb.onerror = function(){ this.src = '/static/img/products/placeholder.jpg' };
 
-        // Append main product div into the root products div
-        botProductsDiv.appendChild(botProductDiv);
-      } catch (error) {
-        console.error(`Error fetching product ${id}:`, error);
-      }
+        const info = document.createElement('div');
+        info.style.display = 'flex';
+        info.style.flexDirection = 'column';
+        info.style.gap = '4px';
+
+        const title = document.createElement('div');
+        title.textContent = name;
+        title.style.fontWeight = '600';
+
+        const price = document.createElement('div');
+        price.textContent = priceText;
+        price.style.color = '#333';
+
+        info.appendChild(title);
+        if (priceText) info.appendChild(price);
+        row.appendChild(thumb);
+        row.appendChild(info);
+        list.appendChild(row);
+      } catch (_) {}
     }
-    
-    // Render products
-    botMessages.appendChild(botProductsDiv);
+
+    botMessages.appendChild(list);
+  }
+
+  // Helper: format price from product meta (supports priceUsd structure)
+  function formatPrice(meta) {
+    if (!meta) return '';
+    if (meta.price && typeof meta.price === 'string') return meta.price;
+    const p = meta.priceUsd || meta.priceUSD || null;
+    if (!p) return '';
+    const units = Number(p.units || 0);
+    const nanos = Number(p.nanos || 0);
+    const value = units + nanos / 1e9;
+    const code = p.currencyCode || 'USD';
+    try {
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency: code }).format(value);
+    } catch (_) {
+      return code + ' ' + value.toFixed(2);
+    }
   }
 
   main();

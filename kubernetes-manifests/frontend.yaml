@@ -82,8 +82,14 @@ spec:
             value: "adservice:9555"
           - name: SHOPPING_ASSISTANT_SERVICE_ADDR
             value: "shoppingassistantservice:80"
-          # # ENV_PLATFORM: One of: local, gcp, aws, azure, onprem, alibaba
-          # # When not set, defaults to "local" unless running in GKE, otherwies auto-sets to gcp
+          - name: AGENTS_GATEWAY_SERVICE_ADDR
+            value: "agents-gateway:80"
+          - name: USE_AGENTS_GATEWAY
+            value: "true"
+          - name: AGENT_MIGRATION_PERCENT
+            value: "100"
+          # ENV_PLATFORM: One of: local, gcp, aws, azure, onprem, alibaba
+          # When not set, defaults to "local" unless running in GKE, otherwies auto-sets to gcp
           # - name: ENV_PLATFORM
           #   value: "aws"
           - name: ENABLE_PROFILER

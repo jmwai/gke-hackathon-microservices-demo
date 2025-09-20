@@ -84,7 +84,12 @@ class SearchResults {
 
     performInitialSearch() {
         const query = this.getQueryFromURL();
-        if (query && this.isAgentSearchEnabled) {
+        const imageData = sessionStorage.getItem('search_image_data');
+        const imageType = sessionStorage.getItem('search_image_type');
+        if (imageData && imageType && this.isAgentSearchEnabled) {
+            // Image-only agent search
+            this.performAgentImageSearch(imageData, imageType);
+        } else if (query && this.isAgentSearchEnabled) {
             // If we have a query and agent search is enabled, perform AI search
             this.performAgentSearch(query);
         }
@@ -109,6 +114,11 @@ class SearchResults {
     async performAgentSearch(query) {
         this.showLoading(true);
         this.updateHeader(query, null, true);
+        
+        // Hide the results container during loading
+        if (this.resultsContainer) {
+            this.resultsContainer.style.display = 'none';
+        }
 
         try {
             // Generate a session ID for the user
@@ -149,6 +159,54 @@ class SearchResults {
             // Fallback: reload page to use server-side search
             window.location.reload();
         } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async performAgentImageSearch(base64Data, mimeType) {
+        this.showLoading(true);
+        this.updateHeader('Image search', null, true);
+        if (this.resultsContainer) {
+            this.resultsContainer.style.display = 'none';
+        }
+
+        try {
+            const sessionId = this.getOrCreateSessionId();
+            const userId = this.getOrCreateUserId();
+            const requestBody = {
+                appName: 'product_discovery_agent',
+                userId,
+                sessionId,
+                newMessage: {
+                    role: 'user',
+                    parts: [
+                        // Provide parameters explicitly to align with FunctionTool schema
+                        { functionCall: { name: 'pd_image_search', args: { image_base64: base64Data, mime_type: mimeType, top_k: 20, filters: {} } } }
+                    ]
+                }
+            };
+
+            const response = await fetch(this.agentEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody),
+                timeout: 15000
+            });
+
+            if (!response.ok) {
+                throw new Error(`Agent image search failed: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const products = this.parseAgentResponse(data);
+            this.displayResults('Image', products);
+        } catch (err) {
+            console.error('Image search failed:', err);
+            window.location.reload();
+        } finally {
+            // Clear image payload after one use
+            sessionStorage.removeItem('search_image_data');
+            sessionStorage.removeItem('search_image_type');
             this.showLoading(false);
         }
     }
@@ -229,8 +287,9 @@ class SearchResults {
         if (isLoading) {
             headerHTML = `
                 <div class="col-12">
-                    <h2>Searching for "${query}"...</h2>
-                    <p class="text-muted">Finding the best products for you</p>
+                    <div class="search-loading-spinner">
+                        <div class="spinner"></div>
+                    </div>
                 </div>
             `;
         } else if (products && products.length > 0) {
@@ -262,6 +321,9 @@ class SearchResults {
             console.error('Results container not found');
             return;
         }
+        
+        // Show the results container
+        this.resultsContainer.style.display = 'flex';
         
         // Hide server-side fallback messages when AI search is active
         const fallbackContainer = document.querySelector('.server-side-fallback');
