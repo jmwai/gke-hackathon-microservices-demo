@@ -27,6 +27,11 @@ class AgentResponseParser {
         try {
             // Product Discovery Agent
             if (agentData.search_results) {
+                // Prefer richer functionResponse products if present and larger
+                const fallback = this.parseFallbackFormat(agentData);
+                if (fallback && Array.isArray(fallback.products) && fallback.products.length > (agentData.search_results.products?.length || 0)) {
+                    return fallback;
+                }
                 return this.parseProductDiscovery(agentData.search_results);
             }
             
@@ -204,6 +209,22 @@ class AgentResponseParser {
             for (const item of agentData) {
                 if (item.content && item.content.parts) {
                     for (const part of item.content.parts) {
+                        // Function response with products
+                        if (part.functionResponse && part.functionResponse.response && Array.isArray(part.functionResponse.response)) {
+                            const resp = part.functionResponse.response;
+                            return {
+                                type: 'function_response',
+                                products: resp.map(p => ({
+                                    id: p.id || 'unknown',
+                                    name: p.name || 'Unknown Product',
+                                    description: p.description || '',
+                                    picture: p.picture || p.product_image_url || '/static/img/products/placeholder.jpg',
+                                    distance: typeof p.distance === 'number' ? p.distance : 0
+                                })),
+                                summary: `Found ${resp.length} products`,
+                                totalResults: resp.length
+                            };
+                        }
                         if (part.text && (part.text.includes('"products"') || part.text.includes('[{'))) {
                             try {
                                 if (part.text.startsWith('{') && part.text.endsWith('}')) {
@@ -231,6 +252,30 @@ class AgentResponseParser {
             }
         }
         
+        // Handle candidates with functionResponse
+        if (agentData.candidates && agentData.candidates.length > 0) {
+            for (const cand of agentData.candidates) {
+                const parts = (cand.content && cand.content.parts) || [];
+                for (const part of parts) {
+                    if (part.functionResponse && part.functionResponse.response && Array.isArray(part.functionResponse.response)) {
+                        const resp = part.functionResponse.response;
+                        return {
+                            type: 'function_response',
+                            products: resp.map(p => ({
+                                id: p.id || 'unknown',
+                                name: p.name || 'Unknown Product',
+                                description: p.description || '',
+                                picture: p.picture || p.product_image_url || '/static/img/products/placeholder.jpg',
+                                distance: typeof p.distance === 'number' ? p.distance : 0
+                            })),
+                            summary: `Found ${resp.length} products`,
+                            totalResults: resp.length
+                        };
+                    }
+                }
+            }
+        }
+
         // Handle direct product array
         if (Array.isArray(agentData) && agentData.length > 0 && agentData[0].id) {
             return {

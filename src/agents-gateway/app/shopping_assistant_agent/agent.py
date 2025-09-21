@@ -3,10 +3,12 @@ from google.adk.agents import LlmAgent
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from .prompts import recommendation
-from .tools import text_search_tool, image_search_tool, add_to_cart_tool, get_cart_tool, place_order_tool
+from .callbacks import before_model_callback
+from .search_agent import search_agent
+from .cart_agent import cart_agent
 
 
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.5-pro"
 
 
 class RecommendationResult(BaseModel):
@@ -66,11 +68,9 @@ class ShoppingAssistantOutput(BaseModel):
 # Provides personalized product recommendations.
 root_agent = LlmAgent(
     name="shopping_assistant_agent",
-    description="Provides personalized product recommendations by searching for relevant products.",
+    description="The main coordinator agent. Delegates to search_agent for product discovery and cart_agent for cart operations.",
     instruction=recommendation.INSTRUCTION,
     model=GEMINI_MODEL,
-    tools=[text_search_tool, image_search_tool, add_to_cart_tool,
-           get_cart_tool, place_order_tool],
-    output_schema=ShoppingAssistantOutput,
-    output_key="shopping_recommendations"
+    sub_agents=[cart_agent, search_agent],
+    before_model_callback=before_model_callback,
 )

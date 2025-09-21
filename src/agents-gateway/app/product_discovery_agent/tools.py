@@ -30,8 +30,7 @@ def _ensure_vertex():
                 status_code=500, detail=f"Vertex AI SDK not available: {exc}")
         s = get_settings()
         vertexai.init(project=s.PROJECT_ID, location=s.REGION)
-        _mme = MultiModalEmbeddingModel.from_pretrained(
-            "multimodalembedding@001")
+        _mme = MultiModalEmbeddingModel.from_pretrained("multimodalembedding@001")
         _vertex_inited = True
 
 
@@ -232,7 +231,8 @@ def init_vertex():
 # ADK FunctionTool wrappers with defaults and clamping (Product Discovery wants 20)
 def pd_text_search(query: str, filters: Dict[str, Any], top_k: int) -> List[Dict[str, Any]]:
     s = get_settings()
-    k = max(1, min(int(top_k), s.API_TOP_K_MAX))
+    # Always return 20 (up to API_TOP_K_MAX)
+    k = min(20, s.API_TOP_K_MAX)
     return text_vector_search(query, filters or {}, k)
 
 
@@ -244,7 +244,8 @@ def pd_image_search(image_base64: str, mime_type: str, top_k: int, filters: Dict
         raise HTTPException(
             status_code=400, detail="Invalid image_base64 data")
     s = get_settings()
-    k = max(1, min(int(top_k), s.API_TOP_K_MAX))
+    # Always return 20 (up to API_TOP_K_MAX)
+    k = min(20, s.API_TOP_K_MAX)
     return image_vector_search(image_bytes, filters or {}, k)
 
 

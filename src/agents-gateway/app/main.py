@@ -9,7 +9,7 @@ from __future__ import annotations
 
 # CRITICAL: Import warning suppression FIRST before any other imports!
 import app.suppress_warnings  # This MUST be the first import!
-
+import logging
 # Standard library imports
 import os
 import uuid
@@ -28,6 +28,10 @@ from .common.config import get_settings, HealthSnapshot
 from .common.db import health_check
 from .common.utils import fetch_google_api_key, get_or_create_agent_engine
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+)
 
 # Fetch API Key from Secret Manager
 try:

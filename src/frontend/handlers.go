@@ -768,6 +768,9 @@ func (fe *frontendServer) handleChatWithAgents(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Log full assistant agent response for observability
+	log.WithField("assistant_response_full", string(body)).Info("Assistant agent full response")
+
 	// Log response snippet for debugging
 	respSnippet := string(body)
 	if len(respSnippet) > 1000 {
@@ -1133,7 +1136,26 @@ func (fe *frontendServer) parseAgentAssistantResponse(agentResponse map[string]i
 	log.WithField("agent_response_keys", getMapKeys(agentResponse)).Info("Parsing agent assistant response")
 
 	// Handle structured output from shopping_assistant_agent
-	if shoppingRecs, ok := agentResponse["shopping_recommendations"].(map[string]interface{}); ok {
+	var shoppingRecs map[string]interface{}
+	var found bool
+
+	// First try direct access
+	if recs, ok := agentResponse["shopping_recommendations"].(map[string]interface{}); ok {
+		shoppingRecs = recs
+		found = true
+	} else {
+		// Try ADK actions.stateDelta structure
+		if actions, ok := agentResponse["actions"].(map[string]interface{}); ok {
+			if stateDelta, ok := actions["stateDelta"].(map[string]interface{}); ok {
+				if recs, ok := stateDelta["shopping_recommendations"].(map[string]interface{}); ok {
+					shoppingRecs = recs
+					found = true
+				}
+			}
+		}
+	}
+
+	if found {
 		log.Info("Found 'shopping_recommendations' key, parsing structured output.")
 		// Optional action-aware parsing (recommend/cart/order)
 		if action, ok := shoppingRecs["action"].(string); ok {
@@ -1442,6 +1464,9 @@ func (fe *frontendServer) agentSearchHandler(w http.ResponseWriter, r *http.Requ
 		fe.fallbackSearchWrapper(w, r, searchReq)
 		return
 	}
+
+	// Log full agent response at debug level for observability
+	log.WithField("agent_response_full", string(body)).Info("Agent search full response")
 
 	// Log response snippet
 	respSnippet := string(body)

@@ -180,8 +180,7 @@ class SearchResults {
                 newMessage: {
                     role: 'user',
                     parts: [
-                        // Provide parameters explicitly to align with FunctionTool schema
-                        { functionCall: { name: 'pd_image_search', args: { image_base64: base64Data, mime_type: mimeType, top_k: 20, filters: {} } } }
+                        { inline_data: { mime_type: mimeType, data: base64Data } }
                     ]
                 }
             };

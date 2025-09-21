@@ -72,7 +72,7 @@ func getSecretPayload(project, secret, version string) (string, error) {
 		Name: fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secret, version),
 	}
 
-	// Call the API
+	// Call the API.
 	result, err := client.AccessSecretVersion(ctx, req)
 	if err != nil {
 		log.Warnf("failed to access SecretVersion: %v", err)
