@@ -148,22 +148,11 @@ func (fe *frontendServer) searchHandler(w http.ResponseWriter, r *http.Request) 
 
 	// If there's a query, perform search
 	if query != "" {
-		// For now, perform a simple product name search as fallback
-		// The smart search will be handled by JavaScript and AJAX
-		allProducts, err := fe.getProducts(r.Context())
+		// Use database-consistent search for accurate results
+		filteredProducts, err := fe.searchProducts(r.Context(), query)
 		if err != nil {
-			renderHTTPError(log, r, w, errors.Wrap(err, "could not retrieve products"), http.StatusInternalServerError)
+			renderHTTPError(log, r, w, errors.Wrap(err, "could not search products"), http.StatusInternalServerError)
 			return
-		}
-
-		// Simple text-based filtering for fallback
-		var filteredProducts []*pb.Product
-		queryLower := strings.ToLower(query)
-		for _, p := range allProducts {
-			if strings.Contains(strings.ToLower(p.GetName()), queryLower) ||
-				strings.Contains(strings.ToLower(p.GetDescription()), queryLower) {
-				filteredProducts = append(filteredProducts, p)
-			}
 		}
 
 		// Convert to productView
@@ -333,8 +322,39 @@ func (fe *frontendServer) analyzeCartWithAgent(ctx context.Context, sessionId st
 		return // Fail silently for background operation
 	}
 
-	// Prepare agent request for cart analysis
-	userId := "user_" + sessionId
+	// Prepare agent request for cart analysis and ensure ADK session exists
+	userId := sessionId
+	agentGatewayBaseURL := "http://agents-gateway:80"
+	cacheKey := fmt.Sprintf("%s::%s", userId, fe.adkAppName)
+	fe.adkSessionsMu.RLock()
+	cachedSessionId, ok := fe.adkSessions[cacheKey]
+	fe.adkSessionsMu.RUnlock()
+	adkSessionId := cachedSessionId
+	if !ok || adkSessionId == "" {
+		// Create ADK session for this background analysis user/app
+		sessionURL := fmt.Sprintf("%s/apps/%s/users/%s/sessions", agentGatewayBaseURL, fe.adkAppName, userId)
+		sessionReqBody := map[string]string{
+			"appName": fe.adkAppName,
+			"userId":  userId,
+		}
+		sessionJSON, _ := json.Marshal(sessionReqBody)
+		client := &http.Client{Timeout: 10 * time.Second}
+		if resp, err := client.Post(sessionURL, "application/json", strings.NewReader(string(sessionJSON))); err == nil {
+			defer resp.Body.Close()
+			var sessionData map[string]interface{}
+			if json.NewDecoder(resp.Body).Decode(&sessionData) == nil {
+				if id, ok := sessionData["id"].(string); ok && id != "" {
+					adkSessionId = id
+					fe.adkSessionsMu.Lock()
+					fe.adkSessions[cacheKey] = id
+					fe.adkSessionsMu.Unlock()
+				}
+			}
+		}
+	}
+	if adkSessionId == "" {
+		adkSessionId = sessionId
+	}
 
 	// Build cart context for the agent
 	cartItems := make([]map[string]interface{}, len(cart))
@@ -346,9 +366,9 @@ func (fe *frontendServer) analyzeCartWithAgent(ctx context.Context, sessionId st
 	}
 
 	agentRequest := map[string]interface{}{
-		"appName":   "shopping_assistant_agent",
+		"appName":   fe.adkAppName,
 		"userId":    userId,
-		"sessionId": sessionId,
+		"sessionId": adkSessionId,
 		"newMessage": map[string]interface{}{
 			"role": "user",
 			"parts": []map[string]interface{}{
@@ -662,14 +682,11 @@ func (fe *frontendServer) handleChatWithAgents(w http.ResponseWriter, r *http.Re
 	}
 
 	// Use the same two-step process as search
-	userId := sessionID(r)
-	if userId == "" {
-		userId = "user_" + fmt.Sprintf("%x", rand.Uint32())
-	}
+	userId := fe.getOrCreateUserId(r)
 
 	// Step 1: Create agent request using same pattern as search
 	searchReq := SearchRequest{
-		AppName:   "shopping_assistant_agent",
+		AppName:   fe.adkAppName,
 		UserId:    userId,
 		SessionId: "", // Will be set after session creation
 		NewMessage: map[string]interface{}{
@@ -701,38 +718,54 @@ func (fe *frontendServer) handleChatWithAgents(w http.ResponseWriter, r *http.Re
 	agentGatewayBaseURL := "http://agents-gateway:80"
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	// Create session first (same as search)
-	sessionURL := fmt.Sprintf("%s/apps/%s/users/%s/sessions", agentGatewayBaseURL, searchReq.AppName, searchReq.UserId)
-	sessionReqBody := map[string]string{
-		"appName": searchReq.AppName,
-		"userId":  searchReq.UserId,
-	}
-	sessionJSON, _ := json.Marshal(sessionReqBody)
+	// Reuse ADK session per (userId, appName). Create only if absent.
+	cacheKey := fmt.Sprintf("%s::%s", searchReq.UserId, searchReq.AppName)
+	fe.adkSessionsMu.RLock()
+	cachedSessionId, ok := fe.adkSessions[cacheKey]
+	fe.adkSessionsMu.RUnlock()
+	if ok && cachedSessionId != "" {
+		log.WithFields(logrus.Fields{"user": searchReq.UserId, "app": searchReq.AppName, "session": cachedSessionId}).Info("Reusing ADK session")
+		searchReq.SessionId = cachedSessionId
+	} else {
+		// Create session with state seeded with user_id
+		sessionURL := fmt.Sprintf("%s/apps/%s/users/%s/sessions", agentGatewayBaseURL, fe.adkAppName, searchReq.UserId)
+		sessionReqBody := map[string]any{
+			"state": map[string]any{
+				"user_id": userId,
+			},
+		}
+		sessionJSON, _ := json.Marshal(sessionReqBody)
 
-	sessionResp, err := client.Post(sessionURL, "application/json", strings.NewReader(string(sessionJSON)))
-	if err != nil {
-		log.WithField("error", err).Error("failed to create session with agents-gateway for assistant")
-		fe.legacyChatBotHandler(w, r)
-		return
-	}
-	defer sessionResp.Body.Close()
+		sessionResp, err := client.Post(sessionURL, "application/json", strings.NewReader(string(sessionJSON)))
+		if err != nil {
+			log.WithField("error", err).Error("failed to create session with agents-gateway for assistant")
+			fe.legacyChatBotHandler(w, r)
+			return
+		}
+		defer sessionResp.Body.Close()
 
-	var sessionData map[string]interface{}
-	if err := json.NewDecoder(sessionResp.Body).Decode(&sessionData); err != nil {
-		log.WithField("error", err).Error("failed to parse session response for assistant")
-		fe.legacyChatBotHandler(w, r)
-		return
-	}
+		var sessionData map[string]interface{}
+		if err := json.NewDecoder(sessionResp.Body).Decode(&sessionData); err != nil {
+			log.WithField("error", err).Error("failed to parse session response for assistant")
+			fe.legacyChatBotHandler(w, r)
+			return
+		}
 
-	// Use the session ID from the agents-gateway response
-	if sessionId, ok := sessionData["id"].(string); ok {
-		searchReq.SessionId = sessionId
+		// Use and cache the session ID from the agents-gateway response
+		if sessionId, ok := sessionData["id"].(string); ok {
+			searchReq.SessionId = sessionId
+			fe.adkSessionsMu.Lock()
+			fe.adkSessions[cacheKey] = sessionId
+			fe.adkSessionsMu.Unlock()
+			log.WithFields(logrus.Fields{"user": searchReq.UserId, "app": searchReq.AppName, "session": sessionId}).Info("Created and cached ADK session")
+		}
 	}
 
 	// Now make the actual assistant request (same as search)
 	agentGatewayURL := agentGatewayBaseURL + "/run"
 	requestJSON, _ := json.Marshal(searchReq)
 
+	log.WithField("request_body", string(requestJSON)).Info("Creating customer service request")
 	log.WithField("payload", string(requestJSON)).Info("Forwarding assistant request to agents-gateway")
 
 	agentReq, err := http.NewRequest(http.MethodPost, agentGatewayURL, strings.NewReader(string(requestJSON)))
@@ -963,9 +996,40 @@ func (fe *frontendServer) enhancedChatBotHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Generate session ID for the user if not provided
+	// Generate session ID for the user if not provided.
 	sessionId := fe.getOrCreateSessionId(r)
 	userId := fe.getOrCreateUserId(r)
+
+	// Ensure ADK session exists and reuse it for Vertex AI sessions.
+	agentGatewayBaseURL := "http://agents-gateway:80"
+	cacheKey := fmt.Sprintf("%s::%s", userId, fe.reAppName)
+	fe.adkSessionsMu.RLock()
+	cachedSessionId, ok := fe.adkSessions[cacheKey]
+	fe.adkSessionsMu.RUnlock()
+	adkSessionId := cachedSessionId
+	if !ok || adkSessionId == "" {
+		// Create or upsert ADK session using explicit browser sessionId
+		sessionURL := fmt.Sprintf("%s/apps/%s/users/%s/sessions/%s", agentGatewayBaseURL, fe.adkAppName, userId, sessionId)
+		sessionReqBody := map[string]any{
+			"state": map[string]any{
+				"user_id": userId,
+			},
+		}
+		sessionJSON, _ := json.Marshal(sessionReqBody)
+		client := &http.Client{Timeout: 30 * time.Second}
+		req, _ := http.NewRequest(http.MethodPost, sessionURL, strings.NewReader(string(sessionJSON)))
+		req.Header.Set("Content-Type", "application/json")
+		if _, err := client.Do(req); err == nil {
+			adkSessionId = sessionId
+			fe.adkSessionsMu.Lock()
+			fe.adkSessions[cacheKey] = adkSessionId
+			fe.adkSessionsMu.Unlock()
+		}
+	}
+	if adkSessionId == "" {
+		// Fall back to cookie session if ADK session creation failed
+		adkSessionId = sessionId
+	}
 
 	// Prepare agent request based on whether image is provided
 	var agentRequest map[string]interface{}
@@ -973,9 +1037,9 @@ func (fe *frontendServer) enhancedChatBotHandler(w http.ResponseWriter, r *http.
 	if chatReq.Image != "" && chatReq.Image != "undefined" {
 		// Multimodal request (text + image)
 		agentRequest = map[string]interface{}{
-			"appName":   "shopping_assistant_agent",
+			"appName":   fe.adkAppName,
 			"userId":    userId,
-			"sessionId": sessionId,
+			"sessionId": adkSessionId,
 			"newMessage": map[string]interface{}{
 				"role": "user",
 				"parts": []map[string]interface{}{
@@ -992,9 +1056,9 @@ func (fe *frontendServer) enhancedChatBotHandler(w http.ResponseWriter, r *http.
 	} else {
 		// Text-only request
 		agentRequest = map[string]interface{}{
-			"appName":   "shopping_assistant_agent",
+			"appName":   fe.adkAppName,
 			"userId":    userId,
-			"sessionId": sessionId,
+			"sessionId": adkSessionId,
 			"newMessage": map[string]interface{}{
 				"role": "user",
 				"parts": []map[string]interface{}{
@@ -1112,21 +1176,23 @@ func (fe *frontendServer) legacyChatBotHandler(w http.ResponseWriter, r *http.Re
 }
 
 func (fe *frontendServer) getOrCreateSessionId(r *http.Request) string {
-	// Try to get session ID from existing session
+	// Prefer cookie first for stability across requests
+	if c, err := r.Cookie(cookieSessionID); err == nil && c != nil && c.Value != "" {
+		return c.Value
+	}
+	// Fall back to context-injected ID (middleware)
 	if sessionId := sessionID(r); sessionId != "" {
 		return sessionId
 	}
-
-	// Generate new session ID
-	return "session_" + strconv.FormatInt(time.Now().UnixNano(), 36) + "_" +
-		fmt.Sprintf("%x", rand.Uint32())
+	// Generate new session ID (last resort)
+	return "session_" + strconv.FormatInt(time.Now().UnixNano(), 36) + "_" + fmt.Sprintf("%x", rand.Uint32())
 }
 
 func (fe *frontendServer) getOrCreateUserId(r *http.Request) string {
 	// For now, use session ID as user ID
 	// In a real implementation, this would be tied to user authentication
 	sessionId := fe.getOrCreateSessionId(r)
-	return "user_" + sessionId
+	return sessionId // Return direct session ID to match frontend cart operations
 }
 
 func (fe *frontendServer) parseAgentAssistantResponse(agentResponse map[string]interface{}) (string, []map[string]interface{}) {
@@ -1739,9 +1805,9 @@ func (fe *frontendServer) smartCartRecommendationsHandler(w http.ResponseWriter,
 	}
 
 	// Prepare agent request
-	userId := "user_" + sessionId
+	userId := sessionId
 	agentRequest := map[string]interface{}{
-		"appName":   "shopping_assistant_agent",
+		"appName":   fe.reAppName,
 		"userId":    userId,
 		"sessionId": sessionId,
 		"newMessage": map[string]interface{}{
@@ -1861,7 +1927,7 @@ func (fe *frontendServer) checkoutAssistanceHandler(w http.ResponseWriter, r *ht
 	}
 
 	// Prepare agent request for checkout guidance
-	userId := "user_" + sessionId
+	userId := sessionId
 	agentRequest := map[string]interface{}{
 		"appName":   "checkout_agent",
 		"userId":    userId,
@@ -2028,6 +2094,8 @@ func (fe *frontendServer) customerServiceHandler(w http.ResponseWriter, r *http.
 	agentGatewayURL := "http://agents-gateway:80/run"
 	requestBody, _ := json.Marshal(agentRequest)
 
+	log.WithField("request_body", string(requestBody)).Info("Creating customer service request")
+
 	req, err := http.NewRequest(http.MethodPost, agentGatewayURL, strings.NewReader(string(requestBody)))
 	if err != nil {
 		log.WithField("error", err).Error("failed to create customer service request")
@@ -2149,18 +2217,46 @@ func (fe *frontendServer) apiGetCart(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"error": "cart_fetch_failed"})
 		return
 	}
+
+	// Enrich cart items with product details
 	items := make([]map[string]any, 0, len(cart))
+	var totalPrice float64
+
 	for _, it := range cart {
+		// Fetch product details for each cart item
+		product, err := fe.getProduct(r.Context(), it.GetProductId())
+		if err != nil {
+			// If product fetch fails, use basic info
+			items = append(items, map[string]any{
+				"product_id": it.GetProductId(),
+				"name":       it.GetProductId(),
+				"quantity":   it.GetQuantity(),
+				"price":      "",
+				"image":      "",
+				"line_total": "",
+			})
+			continue
+		}
+
+		// Calculate line total
+		unitPrice := float64(product.GetPriceUsd().GetUnits()) + float64(product.GetPriceUsd().GetNanos())/1000000000.0
+		lineTotal := unitPrice * float64(it.GetQuantity())
+		totalPrice += lineTotal
+
 		items = append(items, map[string]any{
 			"product_id": it.GetProductId(),
-			"name":       it.GetProductId(),
+			"name":       product.GetName(),
 			"quantity":   it.GetQuantity(),
+			"price":      fmt.Sprintf("%.2f", unitPrice),
+			"image":      product.GetPicture(),
+			"line_total": fmt.Sprintf("%.2f", lineTotal),
 		})
 	}
+
 	json.NewEncoder(w).Encode(map[string]any{
 		"cart_id":     userId,
 		"items":       items,
-		"total_price": "",
+		"total_price": fmt.Sprintf("%.2f", totalPrice),
 	})
 }
 
@@ -2221,14 +2317,19 @@ func (fe *frontendServer) apiCheckout(w http.ResponseWriter, r *http.Request) {
 	if req.UserId == "" {
 		req.UserId = sessionID(r)
 	}
-	// For demo, return a synthetic confirmation
-	json.NewEncoder(w).Encode(map[string]any{
+	// For demo, return a synthetic confirmation and clear the user's cart
+	resp := map[string]any{
 		"order_id":           "ORDER-" + fmt.Sprintf("%x", rand.Uint32()),
 		"status":             "success",
 		"tracking_id":        fmt.Sprintf("1Z%x", rand.Uint32()),
 		"estimated_delivery": time.Now().Add(48 * time.Hour).Format("2006-01-02"),
 		"message":            "Your order has been placed successfully!",
-	})
+	}
+
+	// Best-effort cart clear after successful checkout. Ignore errors for demo.
+	_ = fe.emptyCart(r.Context(), req.UserId)
+
+	json.NewEncoder(w).Encode(resp)
 }
 
 // chooseAd queries for advertisements available and randomly chooses one, if

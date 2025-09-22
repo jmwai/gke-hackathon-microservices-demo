@@ -4,6 +4,14 @@ import tempfile
 import logging
 from timeit import default_timer as timer
 from typing import Any, Dict, List, Optional
+import json
+import hashlib
+import os
+
+try:
+    import redis  # type: ignore
+except Exception:  # pragma: no cover
+    redis = None
 import base64
 from decimal import Decimal
 
@@ -18,6 +26,42 @@ _mme = None
 _vertex_inited = False
 _embedding_cache = {}
 
+# Redis client singleton
+_redis_client = None
+
+
+def _get_redis():
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    if redis is None:
+        return None
+    addr = os.getenv("REDIS_ADDR", "redis-cart:6379")
+    host, port = addr.split(":", 1) if ":" in addr else (addr, "6379")
+    try:
+        _redis_client = redis.StrictRedis(
+            host=host, port=int(port), decode_responses=True)
+        # Ping to verify connectivity; fail-open on error
+        try:
+            _redis_client.ping()
+        except Exception:
+            return None
+        return _redis_client
+    except Exception:
+        return None
+
+
+def _make_cache_key(query: str, filters: Optional[Dict[str, Any]], top_k: int) -> str:
+    key_data = {
+        "query": query,
+        "filters": filters or {},
+        "top_k": top_k,
+    }
+    raw = json.dumps(key_data, sort_keys=True)
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    dataset_ver = os.getenv("PRODUCT_DATASET_VERSION", "default")
+    return f"pds:{dataset_ver}:v1:{digest}"
+
 
 def _ensure_vertex():
     global _mme, _vertex_inited
@@ -30,7 +74,8 @@ def _ensure_vertex():
                 status_code=500, detail=f"Vertex AI SDK not available: {exc}")
         s = get_settings()
         vertexai.init(project=s.PROJECT_ID, location=s.REGION)
-        _mme = MultiModalEmbeddingModel.from_pretrained("multimodalembedding@001")
+        _mme = MultiModalEmbeddingModel.from_pretrained(
+            "multimodalembedding@001")
         _vertex_inited = True
 
 
@@ -101,6 +146,22 @@ def text_vector_search(query: str, filters: Optional[Dict[str, Any]], top_k: int
     start_time = timer()
     result_count = 0
     out: List[Dict[str, Any]] = []
+    cache = _get_redis()
+    cache_key = _make_cache_key(query, filters, top_k)
+    cache_hit = False
+    if cache is not None:
+        try:
+            cached = cache.get(cache_key)
+            if cached:
+                parsed = json.loads(cached)
+                if isinstance(parsed, list):
+                    logging.getLogger("agents.vector_search").info(
+                        "text_vector_search cache hit key=%s count=%s", cache_key[-8:], len(
+                            parsed)
+                    )
+                    return parsed
+        except Exception:
+            pass
     print(
         f"DEBUG: text_vector_search called with query='{query}', filters={filters}, top_k={top_k}")
     try:
@@ -169,6 +230,17 @@ def text_vector_search(query: str, filters: Optional[Dict[str, Any]], top_k: int
         )
         print(
             f"DEBUG: text_vector_search returning {result_count} results: {out}")
+        # Write-through cache on success
+        if cache is not None:
+            try:
+                ttl = int(os.getenv("TEXT_SEARCH_CACHE_TTL_SEC", "3600"))
+                cache.setex(cache_key, ttl, json.dumps(out))
+                logging.getLogger("agents.vector_search").info(
+                    "text_vector_search cache set key=%s ttl=%s count=%s",
+                    cache_key[-8:], ttl, len(out)
+                )
+            except Exception:
+                pass
     return out
 
 

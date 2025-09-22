@@ -13,7 +13,7 @@ Examples (structure only):
 {
   "shopping_recommendations": {
     "action": "recommend",
-    "summary": "Found 5 trail running shoes.",
+    "summary": "Found some trail running shoes for you. Which one would you like to add to your cart?",
     "recommendations": [ {"id":"SHOEX...","name":"...","description":"...","picture":"...","price": 5.0, "distance":0.12} ],
     "recommendation_summary": "Lightweight, good traction for rocky terrain."
   }

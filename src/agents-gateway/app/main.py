@@ -73,13 +73,15 @@ agent_engine_id = agent_engine.resource_name
 AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ALLOWED_ORIGINS = ["http://localhost", "http://localhost:8080", "*"]
 SERVE_WEB_INTERFACE = False
-# Construct the URI strings for the managed services using the correct scheme
+print(f"Agent engine ID: {agent_engine_id}")
+# Per the ADK source code (fast_api.py), the get_fast_api_app helper
+# expects URI strings for service configuration.
+# The `agent_engine_id` variable already contains the full resource name.
 SESSION_SERVICE_URI = f"agentengine://{agent_engine_id}"
 MEMORY_BANK_SERVICE_URI = f"agentengine://{agent_engine_id}"
-
 app: FastAPI = get_fast_api_app(
     agents_dir=AGENT_DIR,
-    # session_service_uri=SESSION_SERVICE_URI,
+    session_service_uri=SESSION_SERVICE_URI,
     memory_service_uri=MEMORY_BANK_SERVICE_URI,
     allow_origins=ALLOWED_ORIGINS,
     web=SERVE_WEB_INTERFACE,
@@ -87,8 +89,6 @@ app: FastAPI = get_fast_api_app(
 )
 
 print("ADK FastAPI app created successfully")
-
-# Add logging middleware to track requests
 
 
 @app.middleware("http")
@@ -105,4 +105,3 @@ async def log_requests(request, call_next):
 @app.get("/healthz")
 def healthz() -> Dict[str, Any]:
     return {"status": "ok", "message": "Agents Gateway is healthy"}
-

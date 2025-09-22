@@ -1,5 +1,10 @@
 from __future__ import annotations
-from .state import resolve_index_to_product_id, resolve_index_to_product_id_for_user
+from .state import (
+    resolve_index_to_product_id,
+    resolve_index_to_product_id_for_user,
+    get_last_results,
+    get_last_results_for_user,
+)
 from .callbacks import _extract_user_id
 import base64
 from typing import Any, Dict, List
@@ -14,6 +19,7 @@ from app.product_discovery_agent.tools import (
     text_vector_search,
 )
 from google.adk.tools import FunctionTool
+from google.adk.tools.tool_context import ToolContext
 
 
 FRONTEND_BASE = "http://frontend:80"
@@ -25,7 +31,6 @@ logger = logging.getLogger("agents.shopping.tools")
 # search functions, but the wrappers enforce a fixed value of 5.
 def text_search_tool(query: str, top_k: int, filters: Dict[str, Any]):
     s = get_settings()
-    # Always return 5 (up to API_TOP_K_MAX)
     k = min(5, s.API_TOP_K_MAX)
     return text_vector_search(query, filters or {}, k)
 
@@ -42,7 +47,7 @@ def image_search_tool(image_base64: str, mime_type: str, top_k: int, filters: Di
     return image_vector_search(image_bytes, filters or {}, k)
 
 
-def add_to_cart(number: int, tool_context: Any) -> Dict[str, Any]:
+def add_to_cart(number: int, tool_context: ToolContext) -> Dict[str, Any]:
     """
     Add one product to the user's cart by its ordinal number from the last search.
 
@@ -52,13 +57,64 @@ def add_to_cart(number: int, tool_context: Any) -> Dict[str, Any]:
     Returns:
         A normalized cart dict or {"error": "add_to_cart_failed"} on failure.
     """
-    user_id = _extract_user_id(tool_context) or "anonymous"
-    product_id = resolve_index_to_product_id(tool_context, number)
-    # If session is missing (e.g., a new session), fall back to per-user store
+    # Extract user ID; also check state['user_id'] if callbacks seeded it
+    user_id = _extract_user_id(tool_context)
+    if not user_id:
+        try:
+            if hasattr(tool_context, "state") and isinstance(tool_context.state, dict):
+                sid = tool_context.state.get("user_id")
+                if isinstance(sid, str) and sid:
+                    user_id = sid
+        except Exception:
+            pass
+    if not user_id:
+        logger.error(
+            "add_to_cart: stable user_id not found in context; refusing to write cart")
+        return {"error": "user_id_missing", "message": "Session not recognized. Please retry or refresh the page."}
+    logger.info("add_to_cart: user=%s requested ordinal=%s", user_id, number)
+
+    # Access session state directly via tool_context.state
+    shopping_state = tool_context.state.get("shopping", {})
+    last_results = shopping_state.get("last_results", {})
+    items = last_results.get("items", [])
+
+    logger.debug(
+        "add_to_cart: found %d items in tool_context.state", len(items))
+
+    # Resolve product ID from session state
+    product_id = None
+    if 1 <= number <= len(items):
+        product_id = items[number - 1].get("id")
+        logger.debug(
+            "add_to_cart: resolved ordinal %d to product_id=%s", number, product_id)
+
+    # Fallback to per-user store if session state is empty
     if not product_id:
         product_id = resolve_index_to_product_id_for_user(user_id, number)
+
     if not product_id:
-        return {"error": f"Could not find item number {number}. Please try another search."}
+        # Compute fallback count for diagnostics
+        fallback_lr = get_last_results_for_user(user_id)
+        fallback_count = 0
+        if isinstance(fallback_lr, dict) and isinstance(fallback_lr.get("items"), list):
+            fallback_count = len(fallback_lr.get("items") or [])
+
+        session_count = len(items)
+        available = session_count if session_count > 0 else fallback_count
+        logger.warning(
+            "add_to_cart: could not resolve ordinal=%s for user=%s (session_count=%s fallback_count=%s)",
+            number,
+            user_id,
+            session_count,
+            fallback_count,
+        )
+        if available > 0:
+            return {
+                "error": f"Could not find item number {number}. I currently have {available} items in your last results. Please choose 1..{available} or search again."
+            }
+        return {
+            "error": f"Could not find item number {number}. I don't have recent search results. Please search for products first."
+        }
     quantity = 1
 
     payload = {"userId": user_id,
@@ -84,15 +140,29 @@ def add_to_cart(number: int, tool_context: Any) -> Dict[str, Any]:
         return {"error": "add_to_cart_failed"}
 
 
-def get_cart(user_id: str) -> Dict[str, Any]:
+def get_cart(tool_context: ToolContext) -> Dict[str, Any]:
     """
     Return the current user's cart.
 
     Args:
-        user_id: The user identifier.
+        tool_context: The ADK ToolContext providing access to session state.
     Returns:
         A normalized cart dict or {"error": "get_cart_failed"} on failure.
     """
+    # Extract user ID using the same logic as add_to_cart
+    user_id = _extract_user_id(tool_context)
+    if not user_id:
+        try:
+            if hasattr(tool_context, "state") and isinstance(tool_context.state, dict):
+                sid = tool_context.state.get("user_id")
+                if isinstance(sid, str) and sid:
+                    user_id = sid
+        except Exception:
+            pass
+    if not user_id:
+        logger.error("get_cart: stable user_id not found in context")
+        return {"error": "user_id_missing", "message": "Session not recognized. Please retry or refresh the page."}
+
     url = f"{FRONTEND_BASE}/api/cart?userId={user_id}"
     logger.info(f"Getting cart for user: {user_id}")
     try:
@@ -120,46 +190,80 @@ def get_cart(user_id: str) -> Dict[str, Any]:
         return {"error": "get_cart_failed"}
 
 
-def place_order(user_id: str, street_address: str, zip_code: str, city: str, state: str, country: str, credit_card_number: str, credit_card_expiration_month: int, credit_card_expiration_year: int, credit_card_cvv: str) -> Dict[str, Any]:
+def place_order(tool_context: ToolContext) -> Dict[str, Any]:
     """
-    Place an order for the items in the user's cart.
+    Place an order for the items in the user's cart for the given user.
+
+    This tool hardcodes demo shipping and payment info to mirror the checkout form
+    in the frontend. It will fail gracefully if the cart is empty.
 
     Args:
-        user_id: The user identifier.
-        street_address: Street address for shipping.
-        zip_code: Zip code for shipping.
-        city: City for shipping.
-        state: State for shipping.
-        country: Country for shipping.
-        credit_card_number: The 16-digit card number.
-        credit_card_expiration_month: The 2-digit card expiration month.
-        credit_card_expiration_year: The 4-digit card expiration year.
-        credit_card_cvv: The 3-digit card CVV.
+        user_id: The user identifier (injected by callback or derived by the agent runtime).
+        tool_context: The ADK ToolContext providing access to session state if needed.
+
     Returns:
-        A normalized order dict or {"error": "place_order_failed"} on failure.
+        A normalized order dict with keys: order_id, tracking_id, status,
+        estimated_delivery, message. Returns {"error": "place_order_failed"} on failure.
     """
-    url = f"{FRONTEND_BASE}/api/cart/checkout"
-    payload = {
-        "userId": user_id,
-        "streetAddress": f"{street_address}, {city}, {state}, {zip_code}, {country}",
-        "zipCode": zip_code,
-        "city": city,
-        "state": state,
-        "country": country,
-        "creditCardNumber": credit_card_number,
-        "creditCardExpirationMonth": credit_card_expiration_month,
-        "creditCardExpirationYear": credit_card_expiration_year,
-        "creditCardCvv": credit_card_cvv,
-    }
-    logger.info(f"Placing order for user {user_id}")
     try:
+        # Ensure there is something in the cart first (source of truth: frontend API)
+        user_id = _extract_user_id(tool_context)
+        if not user_id:
+            try:
+                if hasattr(tool_context, "state") and isinstance(tool_context.state, dict):
+                    sid = tool_context.state.get("user_id")
+                    if isinstance(sid, str) and sid:
+                        user_id = sid
+            except Exception:
+                pass
+        if not user_id:
+            return {"error": "user_id_missing", "message": "Session not recognized. Please retry or refresh the page."}
+
+        cart_url = f"{FRONTEND_BASE}/api/cart?userId={user_id}"
+        cart_resp = requests.get(cart_url, timeout=HTTP_TIMEOUT)
+        logger.debug("place_order precheck GET %s status=%s body=%s",
+                     cart_url, cart_resp.status_code, cart_resp.text)
+        cart_resp.raise_for_status()
+        cart_data = cart_resp.json() if cart_resp.text else {}
+        items = cart_data.get("items", []) if isinstance(
+            cart_data, dict) else []
+        if not items:
+            return {
+                "error": "cart_empty",
+                "message": "Your cart is empty. Please add items before placing an order."
+            }
+
+        # Demo hardcoded details from cart.html
+        DEMO_EMAIL = "someone@example.com"
+        DEMO_ADDRESS = "1600 Amphitheatre Parkway, Mountain View, CA 94043, United States"
+        DEMO_LAST4 = "0454"
+
+        url = f"{FRONTEND_BASE}/api/checkout"
+        payload = {
+            "userId": user_id,
+            "userDetails": {
+                "name": DEMO_EMAIL,  # using email as name surrogate for demo
+                "address": DEMO_ADDRESS,
+            },
+            "paymentInfo": {
+                "last4": DEMO_LAST4,
+            },
+        }
+        logger.info("Placing order for user %s", user_id)
         resp = requests.post(url, json=payload, timeout=HTTP_TIMEOUT)
         logger.debug("place_order POST %s status=%s body=%s",
                      url, resp.status_code, resp.text)
         resp.raise_for_status()
         data = resp.json()
         logger.debug("place_order parsed json: %s", data)
-        return data
+        # Normalize expected fields
+        return {
+            "order_id": data.get("order_id"),
+            "tracking_id": data.get("tracking_id"),
+            "status": data.get("status"),
+            "estimated_delivery": data.get("estimated_delivery"),
+            "message": data.get("message"),
+        }
     except Exception as e:
         logger.error("place_order failed: %s", e)
         return {"error": "place_order_failed"}

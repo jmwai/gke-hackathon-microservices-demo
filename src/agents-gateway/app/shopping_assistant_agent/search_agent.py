@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from google.adk.agents import Agent
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, conlist
 from typing import List, Optional
 
 from .prompts import search as search_prompt
@@ -9,6 +9,7 @@ from .tools import text_search_tool, image_search_tool
 from .callbacks import after_tool_callback, before_model_callback, before_tool_callback
 
 GEMINI_MODEL = "gemini-2.5-flash"
+
 
 class RecommendationResult(BaseModel):
     id: str = Field(description="Product ID")
@@ -25,8 +26,8 @@ class RecommendationResult(BaseModel):
 class ShoppingAssistantOutput(BaseModel):
     action: Optional[str] = Field(description="Action taken", default="")
     summary: Optional[str] = Field(description="Summary message", default="")
-    recommendations: Optional[List[RecommendationResult]] = Field(
-        description="Product recommendations", default_factory=list
+    recommendations: Optional[conlist(RecommendationResult, max_items=5)] = Field(  # type: ignore
+        description="Product recommendations (max 5)", default_factory=list
     )
     recommendation_summary: Optional[str] = Field(
         description="A summary of the search results.", default=""

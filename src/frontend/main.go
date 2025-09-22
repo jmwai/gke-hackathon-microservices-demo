@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/profiler"
@@ -90,6 +91,16 @@ type frontendServer struct {
 	agentsGatewaySvcAddr string
 	useAgentsGateway     bool
 	migrationPercent     int
+
+	// ADK session cache: key is userId+"::"+appName, value is sessionId
+	adkSessions   map[string]string
+	adkSessionsMu sync.RWMutex
+
+	// Reasoning Engine app name/resource to use for ADK sessions
+	reAppName string
+
+	// ADK app name (module) to address agents-gateway endpoints (no slashes)
+	adkAppName string
 }
 
 func main() {
@@ -107,6 +118,21 @@ func main() {
 	log.Out = os.Stdout
 
 	svc := new(frontendServer)
+	// Initialize ADK session cache
+	svc.adkSessions = make(map[string]string)
+	// Configure the ADK app name (Reasoning Engine resource) for sessions
+	// If not provided, default to legacy app name for backward-compat
+	if v := os.Getenv("REASONING_ENGINE_APP_NAME"); v != "" {
+		svc.reAppName = v
+	} else {
+		svc.reAppName = "shopping_assistant_agent"
+	}
+	// Configure the agents-gateway app name (module id)
+	if v := os.Getenv("ADK_APP_NAME"); v != "" {
+		svc.adkAppName = v
+	} else {
+		svc.adkAppName = "shopping_assistant_agent"
+	}
 
 	otel.SetTextMapPropagator(
 		propagation.NewCompositeTextMapPropagator(

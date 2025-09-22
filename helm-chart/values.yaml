@@ -167,6 +167,13 @@ productCatalogService:
   name: productcatalogservice
   # Specifies an extra latency to any request on productcatalogservice, by default no extra latency.
   extraLatency: ""
+  # AlloyDB Configuration (same as agents-gateway)
+  alloydb:
+    clusterName: "online-boutique"
+    instanceName: "primary-instance"
+    databaseName: "postgres"
+    tableName: "catalog_items"
+    secretName: "alloydb-secret"
   resources:
     requests:
       cpu: 100m
