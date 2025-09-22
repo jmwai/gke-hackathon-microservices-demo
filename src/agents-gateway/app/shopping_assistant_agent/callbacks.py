@@ -236,12 +236,20 @@ def before_tool_callback(callback_context: Any = None, tool: Any = None, tool_ar
                     # Let cart_agent handle its own response structure
                     return None
 
-                # Enforce at most 5 list items for search_agent finalization
+                # Enforce at most 5 recommendations for search_agent
                 if agent_name == "search_agent":
                     try:
                         payload = tool_args if isinstance(
                             tool_args, dict) else {}
-                        return _clamp_lists_in_payload(payload, limit=5)
+                        container = payload.get("shopping_recommendations") if isinstance(
+                            payload.get("shopping_recommendations"), dict) else payload
+                        recs = container.get("recommendations") if isinstance(
+                            container, dict) else None
+                        if isinstance(recs, list) and len(recs) > 5:
+                            logger.debug(
+                                "callbacks: clamped recommendations from %s to 5", len(recs))
+                            container["recommendations"] = recs[:5]
+                            return payload
                     except Exception:
                         pass
             except Exception:
@@ -374,37 +382,10 @@ def before_tool_callback(callback_context: Any = None, tool: Any = None, tool_ar
         return None
 
 
-def _clamp_lists_in_payload(payload: Dict[str, Any], limit: int = 5) -> Dict[str, Any]:
-    """Clamp common list fields (products/results/recommendations) to limit.
-
-    Works for both top-level and nested shapes used by search_agent outputs.
-    """
-    try:
-        if not isinstance(payload, dict):
-            return payload
-
-        def clamp_in(obj: Dict[str, Any], key: str):
-            val = obj.get(key)
-            if isinstance(val, list) and len(val) > limit:
-                obj[key] = val[:limit]
-
-        # top-level common keys
-        for k in ("products", "results", "recommendations"):
-            clamp_in(payload, k)
-
-        # nested: shopping_recommendations.recommendations
-        sr = payload.get("shopping_recommendations")
-        if isinstance(sr, dict):
-            clamp_in(sr, "recommendations")
-
-        # nested: search_results.{products,results}
-        srch = payload.get("search_results")
-        if isinstance(srch, dict):
-            for k in ("products", "results"):
-                clamp_in(srch, k)
-    except Exception:
-        pass
-    return payload
+"""
+Note: Keep clamps narrow to recommendations list only, to avoid dropping
+unexpected fields in other response shapes.
+"""
 
 
 def after_tool_callback(callback_context: Any = None, tool: Any = None, tool_response: Any = None, **kwargs) -> Optional[Any]:
