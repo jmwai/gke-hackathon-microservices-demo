@@ -51,6 +51,24 @@ spec:
           value: "3550"
         - name: DISABLE_PROFILER
           value: "1"
+        # AlloyDB Configuration (use same database as agents-gateway)
+        - name: PROJECT_ID
+          value: "gemini-adk-vertex-2025"
+        - name: REGION
+          value: "europe-west1"
+        - name: ALLOYDB_CLUSTER_NAME
+          value: "online-boutique"
+        - name: ALLOYDB_INSTANCE_NAME
+          value: "primary-instance"
+        - name: ALLOYDB_DATABASE_NAME
+          value: "postgres"
+        - name: ALLOYDB_TABLE_NAME
+          value: "catalog_items"
+        - name: ALLOYDB_SECRET_NAME
+          value: "alloydb-secret"
+        # Enable selective routing: homepage uses cache, cart/product details use database
+        - name: ENABLE_SELECTIVE_ROUTING
+          value: "true"
         readinessProbe:
           grpc:
             port: 3550

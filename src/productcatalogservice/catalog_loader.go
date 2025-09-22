@@ -72,7 +72,7 @@ func getSecretPayload(project, secret, version string) (string, error) {
 		Name: fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secret, version),
 	}
 
-	// Call the API.
+	// Call the API
 	result, err := client.AccessSecretVersion(ctx, req)
 	if err != nil {
 		log.Warnf("failed to access SecretVersion: %v", err)
@@ -144,7 +144,11 @@ func loadCatalogFromAlloyDB(catalog *pb.ListProductsResponse) error {
 	}
 	defer pool.Close()
 
-	query := "SELECT id, name, description, picture, price_usd_currency_code, price_usd_units, price_usd_nanos, categories FROM " + pgTableName
+	// query := "SELECT id, name, description, picture, price_usd_currency_code, price_usd_units, price_usd_nanos, categories FROM " + pgTableName
+	query := "SELECT id, name, description, picture, price_usd_currency_code, " +
+    "price_usd_units, price_usd_nanos, categories " +
+    "FROM " + pgTableName + " " +
+    "ORDER BY RANDOM() LIMIT 20"
 	rows, err := pool.Query(context.Background(), query)
 	if err != nil {
 		log.Warnf("failed to query database: %v", err)

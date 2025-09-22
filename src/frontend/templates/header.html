@@ -39,6 +39,7 @@
     <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/cart.css">
     <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/order.css">
     <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/bot.css">
+    <script src="{{ $.baseUrl }}/static/js/smart-search.js" defer></script>
     {{ if $.is_cymbal_brand }}
     <link rel='shortcut icon' type='image/x-icon' href='{{ $.baseUrl }}/static/favicon-cymbal.ico' />
     {{ else }}
@@ -64,6 +65,28 @@
                     <img src="{{ $.baseUrl }}/static/icons/Hipster_NavLogo.svg" alt="" class="top-left-logo" />
                     {{ end }}
                 </a>
+                
+                <!-- Smart Search Bar -->
+                <div class="smart-search-container">
+                    <div class="smart-search-wrapper">
+                        <input type="text" 
+                               id="smart-search-input" 
+                               class="smart-search-input" 
+                               placeholder="Ask me anything... (e.g. 'recommend shoes for hiking?')"
+                               autocomplete="off">
+                        <div class="search-loading" id="search-loading" style="display: none;">
+                            <span class="loading-text">Searching...</span>
+                        </div>
+                        <button id="smart-search-camera" class="smart-search-camera" title="Search by image" aria-label="Search by image" type="button">📷</button>
+                        <input id="smart-search-image" type="file" accept="image/*" style="display:none" />
+                    </div>
+                    <div class="smart-search-suggestions">
+                        <span class="suggestion-chip" data-query="trail running shoes for rocky terrain">🏃 Trail running shoes</span>
+                        <span class="suggestion-chip" data-query="waterproof hiking boots for winter">🥾 Waterproof hiking boots</span>
+                        <span class="suggestion-chip" data-query="white sneakers for everyday wear">👟 White everyday sneakers</span>
+                    </div>
+                </div>
+                
                 <div class="controls">
 
                     {{ if $.show_currency }}
@@ -88,6 +111,10 @@
                     </a>
                     {{ end }}
 
+                    <a href="{{ $.baseUrl }}/support" class="cart-link">
+                      <span style="font-size: 22px; color: #853B5C;" title="Customer Support">🎧</span>
+                    </a>
+
                     <a href="{{ $.baseUrl }}/cart" class="cart-link">
                         <img src="{{ $.baseUrl }}/static/icons/Hipster_CartIcon.svg" alt="Cart icon" class="logo" title="Cart" />
                         {{ if $.cart_size }}
@@ -99,4 +126,8 @@
         </div>
 
     </header>
+
+    <!-- Include agent response parser for all pages -->
+    <script src="{{ $.baseUrl }}/static/js/agent-response-parser.js"></script>
+    
     {{end}}

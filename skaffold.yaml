@@ -47,6 +47,8 @@ build:
     context: src/frontend
   - image: adservice
     context: src/adservice
+  - image: agents-gateway
+    context: src/agents-gateway
   tagPolicy:
     gitCommit: {}
   local:

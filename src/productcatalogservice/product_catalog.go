@@ -16,12 +16,13 @@ package main
 
 import (
 	"context"
-	"strings"
+	"os"
 	"time"
 
 	pb "github.com/GoogleCloudPlatform/microservices-demo/src/productcatalogservice/genproto"
 	"google.golang.org/grpc/codes"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -38,40 +39,31 @@ func (p *productCatalog) Watch(req *healthpb.HealthCheckRequest, ws healthpb.Hea
 	return status.Errorf(codes.Unimplemented, "health check via Watch not implemented")
 }
 
-func (p *productCatalog) ListProducts(context.Context, *pb.Empty) (*pb.ListProductsResponse, error) {
+func (p *productCatalog) ListProducts(ctx context.Context, req *pb.Empty) (*pb.ListProductsResponse, error) {
 	time.Sleep(extraLatency)
 
-	return &pb.ListProductsResponse{Products: p.parseCatalog()}, nil
+	if shouldUseDatabase(ctx) {
+		return p.getProductsFromDatabase(ctx)
+	}
+	return p.getProductsFromCache(ctx)
 }
 
 func (p *productCatalog) GetProduct(ctx context.Context, req *pb.GetProductRequest) (*pb.Product, error) {
 	time.Sleep(extraLatency)
 
-	var found *pb.Product
-	for i := 0; i < len(p.parseCatalog()); i++ {
-		if req.Id == p.parseCatalog()[i].Id {
-			found = p.parseCatalog()[i]
-		}
+	if shouldUseDatabase(ctx) {
+		return p.getProductFromDatabase(ctx, req.Id)
 	}
-
-	if found == nil {
-		return nil, status.Errorf(codes.NotFound, "no product with ID %s", req.Id)
-	}
-	return found, nil
+	return p.getProductFromCache(ctx, req.Id)
 }
 
 func (p *productCatalog) SearchProducts(ctx context.Context, req *pb.SearchProductsRequest) (*pb.SearchProductsResponse, error) {
 	time.Sleep(extraLatency)
 
-	var ps []*pb.Product
-	for _, product := range p.parseCatalog() {
-		if strings.Contains(strings.ToLower(product.Name), strings.ToLower(req.Query)) ||
-			strings.Contains(strings.ToLower(product.Description), strings.ToLower(req.Query)) {
-			ps = append(ps, product)
-		}
+	if shouldUseDatabase(ctx) {
+		return p.searchProductsFromDatabase(ctx, req.Query)
 	}
-
-	return &pb.SearchProductsResponse{Results: ps}, nil
+	return p.searchProductsFromCache(ctx, req.Query)
 }
 
 func (p *productCatalog) parseCatalog() []*pb.Product {
@@ -83,4 +75,86 @@ func (p *productCatalog) parseCatalog() []*pb.Product {
 	}
 
 	return p.catalog.Products
+}
+
+// shouldUseDatabase checks request headers to determine data source routing
+func shouldUseDatabase(ctx context.Context) bool {
+	// Feature flag: only enable selective routing if explicitly configured
+	if os.Getenv("ENABLE_SELECTIVE_ROUTING") != "true" {
+		// Default behavior: use existing logic (AlloyDB if configured, else local file)
+		return os.Getenv("ALLOYDB_CLUSTER_NAME") != ""
+	}
+
+	// Check for gRPC metadata requesting database access
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if values := md.Get("use-database"); len(values) > 0 && values[0] == "true" {
+			log.Info("Request header indicates database access required")
+			return true
+		}
+	}
+
+	// Default to cache for performance when selective routing is enabled
+	log.Info("Using cache for fast response")
+	return false
+}
+
+// getProductsFromCache returns products from the cached catalog
+func (p *productCatalog) getProductsFromCache(ctx context.Context) (*pb.ListProductsResponse, error) {
+	log.Info("Loading products from cache")
+	return &pb.ListProductsResponse{Products: p.parseCatalog()}, nil
+}
+
+// getProductsFromDatabase forces a fresh load from AlloyDB
+func (p *productCatalog) getProductsFromDatabase(ctx context.Context) (*pb.ListProductsResponse, error) {
+	log.Info("Loading products from database (forced reload)")
+
+	// Create a fresh catalog response to force database reload
+	freshCatalog := pb.ListProductsResponse{}
+	err := loadCatalog(&freshCatalog)
+	if err != nil {
+		log.Warnf("Database load failed, falling back to cache: %v", err)
+		// Fallback to cache if database fails
+		return p.getProductsFromCache(ctx)
+	}
+
+	return &pb.ListProductsResponse{Products: freshCatalog.Products}, nil
+}
+
+// getProductFromCache finds a product by ID in the cached catalog
+func (p *productCatalog) getProductFromCache(ctx context.Context, productID string) (*pb.Product, error) {
+	log.Infof("Looking up product %s from cache", productID)
+
+	var found *pb.Product
+	for i := 0; i < len(p.parseCatalog()); i++ {
+		if productID == p.parseCatalog()[i].Id {
+			found = p.parseCatalog()[i]
+			break
+		}
+	}
+
+	if found == nil {
+		return nil, status.Errorf(codes.NotFound, "no product with ID %s", productID)
+	}
+	return found, nil
+}
+
+// getProductFromDatabase finds a product by ID with a fresh database lookup
+func (p *productCatalog) getProductFromDatabase(ctx context.Context, productID string) (*pb.Product, error) {
+	log.Infof("Looking up product %s from database (direct query)", productID)
+
+	// Check if AlloyDB is configured
+	if os.Getenv("ALLOYDB_CLUSTER_NAME") == "" {
+		log.Info("AlloyDB not configured, falling back to cache")
+		return p.getProductFromCache(ctx, productID)
+	}
+
+	// Direct database lookup for single product
+	product, err := loadSingleProductFromAlloyDB(productID)
+	if err != nil {
+		log.Warnf("Database lookup failed for product %s: %v, falling back to cache", productID, err)
+		// Fallback to cache if database fails
+		return p.getProductFromCache(ctx, productID)
+	}
+
+	return product, nil
 }

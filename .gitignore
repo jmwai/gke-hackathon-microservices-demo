@@ -28,4 +28,5 @@ release/wi-kubernetes-manifests.yaml
 vendor/
 tools/
 data/
-docs/
+docs/  
+.env

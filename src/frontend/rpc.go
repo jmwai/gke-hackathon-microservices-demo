@@ -21,6 +21,7 @@ import (
 	pb "github.com/GoogleCloudPlatform/microservices-demo/src/frontend/genproto"
 
 	"github.com/pkg/errors"
+	"google.golang.org/grpc/metadata"
 )
 
 const (
@@ -43,12 +44,15 @@ func (fe *frontendServer) getCurrencies(ctx context.Context) ([]string, error) {
 }
 
 func (fe *frontendServer) getProducts(ctx context.Context) ([]*pb.Product, error) {
+	// Homepage: Use cache for fast loading (no database header)
 	resp, err := pb.NewProductCatalogServiceClient(fe.productCatalogSvcConn).
 		ListProducts(ctx, &pb.Empty{})
 	return resp.GetProducts(), err
 }
 
 func (fe *frontendServer) getProduct(ctx context.Context, id string) (*pb.Product, error) {
+	// Product details: Force database lookup for data consistency
+	ctx = fe.addDatabaseHeader(ctx)
 	resp, err := pb.NewProductCatalogServiceClient(fe.productCatalogSvcConn).
 		GetProduct(ctx, &pb.GetProductRequest{Id: id})
 	return resp, err
@@ -94,6 +98,22 @@ func (fe *frontendServer) getShippingQuote(ctx context.Context, items []*pb.Cart
 	}
 	localized, err := fe.convertCurrency(ctx, quote.GetCostUsd(), currency)
 	return localized, errors.Wrap(err, "failed to convert currency for shipping cost")
+}
+
+// addDatabaseHeader adds metadata to request database access
+func (fe *frontendServer) addDatabaseHeader(ctx context.Context) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, "use-database", "true")
+}
+
+func (fe *frontendServer) searchProducts(ctx context.Context, query string) ([]*pb.Product, error) {
+	// Search: Use database for consistency with cart/product details
+	ctx = fe.addDatabaseHeader(ctx)
+	resp, err := pb.NewProductCatalogServiceClient(fe.productCatalogSvcConn).
+		SearchProducts(ctx, &pb.SearchProductsRequest{Query: query})
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetResults(), nil
 }
 
 func (fe *frontendServer) getRecommendations(ctx context.Context, userID string, productIDs []string) ([]*pb.Product, error) {

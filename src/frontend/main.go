@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/profiler"
@@ -54,7 +56,7 @@ var (
 		"TRY": true,
 	}
 
-	baseUrl         = ""
+	baseUrl = ""
 )
 
 type ctxKeySessionID struct{}
@@ -85,6 +87,20 @@ type frontendServer struct {
 	collectorConn *grpc.ClientConn
 
 	shoppingAssistantSvcAddr string
+
+	agentsGatewaySvcAddr string
+	useAgentsGateway     bool
+	migrationPercent     int
+
+	// ADK session cache: key is userId+"::"+appName, value is sessionId
+	adkSessions   map[string]string
+	adkSessionsMu sync.RWMutex
+
+	// Reasoning Engine app name/resource to use for ADK sessions
+	reAppName string
+
+	// ADK app name (module) to address agents-gateway endpoints (no slashes)
+	adkAppName string
 }
 
 func main() {
@@ -102,6 +118,21 @@ func main() {
 	log.Out = os.Stdout
 
 	svc := new(frontendServer)
+	// Initialize ADK session cache
+	svc.adkSessions = make(map[string]string)
+	// Configure the ADK app name (Reasoning Engine resource) for sessions
+	// If not provided, default to legacy app name for backward-compat
+	if v := os.Getenv("REASONING_ENGINE_APP_NAME"); v != "" {
+		svc.reAppName = v
+	} else {
+		svc.reAppName = "shopping_assistant_agent"
+	}
+	// Configure the agents-gateway app name (module id)
+	if v := os.Getenv("ADK_APP_NAME"); v != "" {
+		svc.adkAppName = v
+	} else {
+		svc.adkAppName = "shopping_assistant_agent"
+	}
 
 	otel.SetTextMapPropagator(
 		propagation.NewCompositeTextMapPropagator(
@@ -137,6 +168,13 @@ func main() {
 	mustMapEnv(&svc.adSvcAddr, "AD_SERVICE_ADDR")
 	mustMapEnv(&svc.shoppingAssistantSvcAddr, "SHOPPING_ASSISTANT_SERVICE_ADDR")
 
+	// Agent gateway configuration
+	mustMapEnv(&svc.agentsGatewaySvcAddr, "AGENTS_GATEWAY_SERVICE_ADDR")
+	svc.useAgentsGateway = os.Getenv("USE_AGENTS_GATEWAY") == "true"
+	if percent := os.Getenv("AGENT_MIGRATION_PERCENT"); percent != "" {
+		svc.migrationPercent, _ = strconv.Atoi(percent)
+	}
+
 	mustConnGRPC(ctx, &svc.currencySvcConn, svc.currencySvcAddr)
 	mustConnGRPC(ctx, &svc.productCatalogSvcConn, svc.productCatalogSvcAddr)
 	mustConnGRPC(ctx, &svc.cartSvcConn, svc.cartSvcAddr)
@@ -146,20 +184,33 @@ func main() {
 	mustConnGRPC(ctx, &svc.adSvcConn, svc.adSvcAddr)
 
 	r := mux.NewRouter()
-	r.HandleFunc(baseUrl + "/", svc.homeHandler).Methods(http.MethodGet, http.MethodHead)
-	r.HandleFunc(baseUrl + "/product/{id}", svc.productHandler).Methods(http.MethodGet, http.MethodHead)
-	r.HandleFunc(baseUrl + "/cart", svc.viewCartHandler).Methods(http.MethodGet, http.MethodHead)
-	r.HandleFunc(baseUrl + "/cart", svc.addToCartHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/cart/empty", svc.emptyCartHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/setCurrency", svc.setCurrencyHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/logout", svc.logoutHandler).Methods(http.MethodGet)
-	r.HandleFunc(baseUrl + "/cart/checkout", svc.placeOrderHandler).Methods(http.MethodPost)
-	r.HandleFunc(baseUrl + "/assistant", svc.assistantHandler).Methods(http.MethodGet)
-	r.PathPrefix(baseUrl + "/static/").Handler(http.StripPrefix(baseUrl + "/static/", http.FileServer(http.Dir("./static/"))))
-	r.HandleFunc(baseUrl + "/robots.txt", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "User-agent: *\nDisallow: /") })
-	r.HandleFunc(baseUrl + "/_healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") })
-	r.HandleFunc(baseUrl + "/product-meta/{ids}", svc.getProductByID).Methods(http.MethodGet)
-	r.HandleFunc(baseUrl + "/bot", svc.chatBotHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/", svc.homeHandler).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc(baseUrl+"/search", svc.searchHandler).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc(baseUrl+"/product/{id}", svc.productHandler).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc(baseUrl+"/cart", svc.viewCartHandler).Methods(http.MethodGet, http.MethodHead)
+	r.HandleFunc(baseUrl+"/cart", svc.addToCartHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/cart/empty", svc.emptyCartHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/setCurrency", svc.setCurrencyHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/logout", svc.logoutHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/cart/checkout", svc.placeOrderHandler).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/assistant", svc.assistantHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/support", svc.supportHandler).Methods(http.MethodGet)
+	r.PathPrefix(baseUrl + "/static/").Handler(http.StripPrefix(baseUrl+"/static/", http.FileServer(http.Dir("./static/"))))
+	r.HandleFunc(baseUrl+"/robots.txt", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "User-agent: *\nDisallow: /") })
+	r.HandleFunc(baseUrl+"/_healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") })
+	r.HandleFunc(baseUrl+"/product-meta/{ids}", svc.getProductByID).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/bot", svc.chatBotHandler).Methods(http.MethodPost)
+	// Agent tools HTTP endpoints
+	r.HandleFunc(baseUrl+"/api/cart", svc.apiGetCart).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/api/cart/add", svc.apiAddToCart).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/api/cart/remove", svc.apiRemoveFromCart).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/api/checkout", svc.apiCheckout).Methods(http.MethodPost)
+	r.HandleFunc(baseUrl+"/api/agent-search", svc.agentSearchHandler).Methods(http.MethodPost, http.MethodOptions)
+	r.HandleFunc(baseUrl+"/api/search", svc.fallbackSearchHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/api/feature-flags", svc.featureFlagsHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/api/cart/recommendations", svc.smartCartRecommendationsHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/api/checkout/assistance", svc.checkoutAssistanceHandler).Methods(http.MethodGet)
+	r.HandleFunc(baseUrl+"/api/customer-service", svc.customerServiceHandler).Methods(http.MethodPost, http.MethodOptions)
 
 	var handler http.Handler = r
 	handler = &logHandler{log: log, next: handler}     // add logging

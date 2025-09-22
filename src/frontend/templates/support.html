@@ -1,0 +1,399 @@
+<!--
+ Copyright 2020 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+{{ define "support" }}
+
+{{ template "header" . }}
+<div {{ with $.platform_css }} class="{{.}}" {{ end }}>
+  <span class="platform-flag">
+    {{$.platform_name}}
+  </span>
+</div>
+
+<main role="main" class="support-main">
+  <div class="container">
+    <div class="row">
+      <div class="col-md-12">
+        <h1 class="text-center mb-4">Customer Support</h1>
+        <p class="text-center text-muted mb-5">How can we help you today?</p>
+      </div>
+    </div>
+
+    <div class="row">
+      <!-- Support Categories -->
+      <div class="col-lg-4 mb-4">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-body text-center">
+            <div class="support-icon mb-3">📦</div>
+            <h5 class="card-title">Order Tracking</h5>
+            <p class="card-text text-muted">Check the status of your order and get delivery updates.</p>
+            <button class="btn btn-outline-primary" onclick="showSupportForm('order_tracking')">
+              Track Order
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-4 mb-4">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-body text-center">
+            <div class="support-icon mb-3">↩️</div>
+            <h5 class="card-title">Returns & Refunds</h5>
+            <p class="card-text text-muted">Process returns and get help with refunds.</p>
+            <button class="btn btn-outline-primary" onclick="showSupportForm('returns')">
+              Start Return
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-4 mb-4">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-body text-center">
+            <div class="support-icon mb-3">❓</div>
+            <h5 class="card-title">General Help</h5>
+            <p class="card-text text-muted">Ask questions about policies, shipping, or anything else.</p>
+            <button class="btn btn-outline-primary" onclick="showSupportForm('policy')">
+              Get Help
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Support Form -->
+    <div id="support-form-section" class="row mt-5" style="display: none;">
+      <div class="col-lg-8 mx-auto">
+        <div class="card border-0 shadow">
+          <div class="card-header bg-transparent d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center">
+              <span id="support-form-icon" class="mr-2">🤖</span>
+              <h5 class="mb-0" id="support-form-title">AI Customer Support</h5>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="hideSupportForm()">
+              Close
+            </button>
+          </div>
+          <div class="card-body">
+            <!-- Support Type Display -->
+            <div id="support-type-display" class="alert alert-light border mb-4">
+              <small class="text-muted">Support Type:</small>
+              <span id="support-type-text" class="ml-2 font-weight-bold"></span>
+            </div>
+
+            <!-- Order Information (for tracking and returns) -->
+            <div id="order-info-section" style="display: none;">
+              <div class="row mb-3">
+                <div class="col-md-6">
+                  <label for="order-id" class="form-label">Order Number</label>
+                  <input type="text" class="form-control" id="order-id" placeholder="Enter your order number">
+                </div>
+                <div class="col-md-6">
+                  <label for="customer-email" class="form-label">Email Address</label>
+                  <input type="email" class="form-control" id="customer-email" placeholder="Enter your email">
+                </div>
+              </div>
+            </div>
+
+            <!-- Message Input -->
+            <div class="mb-3">
+              <label for="support-message" class="form-label">How can we help you?</label>
+              <textarea class="form-control" id="support-message" rows="4" 
+                        placeholder="Please describe your question or issue..."></textarea>
+            </div>
+
+            <!-- Submit Button -->
+            <div class="d-flex justify-content-between align-items-center">
+              <button type="button" class="btn btn-primary" onclick="submitSupportRequest()">
+                <span id="submit-btn-text">Get AI Assistance</span>
+                <span id="submit-loading" class="spinner-border spinner-border-sm ml-2" style="display: none;"></span>
+              </button>
+              <small class="text-muted">
+                <span class="mr-1">🤖</span>
+                Powered by AI agents
+              </small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Support Response -->
+    <div id="support-response-section" class="row mt-4" style="display: none;">
+      <div class="col-lg-8 mx-auto">
+        <div class="card border-0 shadow">
+          <div class="card-header bg-transparent d-flex align-items-center">
+            <span class="mr-2">💬</span>
+            <h6 class="mb-0">Support Response</h6>
+            <span id="agent-powered-badge" class="badge badge-success ml-auto" style="display: none;">
+              AI-Powered
+            </span>
+          </div>
+          <div class="card-body">
+            <div id="support-response-content">
+              <!-- Response will be populated here -->
+            </div>
+            
+            <!-- Escalation Notice -->
+            <div id="escalation-notice" class="alert alert-warning mt-3" style="display: none;">
+              <div class="d-flex align-items-center">
+                <span class="mr-2">⚠️</span>
+                <div>
+                  <strong>Human Support Needed</strong>
+                  <p class="mb-0 small">This request requires human assistance. Our support team will be in touch shortly.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="d-flex justify-content-between mt-4">
+              <button type="button" class="btn btn-outline-secondary" onclick="startNewRequest()">
+                New Request
+              </button>
+              <div>
+                <button type="button" class="btn btn-outline-danger" onclick="escalateToHuman()">
+                  Escalate to Human
+                </button>
+                <button type="button" class="btn btn-success ml-2" onclick="markResolved()">
+                  Issue Resolved
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Help Links -->
+    <div class="row mt-5">
+      <div class="col-12">
+        <div class="text-center">
+          <h6 class="text-muted mb-3">Quick Help</h6>
+          <div class="row">
+            <div class="col-md-3 mb-2">
+              <a href="#" class="text-decoration-none" onclick="quickHelp('shipping')">
+                <small>🚚 Shipping Info</small>
+              </a>
+            </div>
+            <div class="col-md-3 mb-2">
+              <a href="#" class="text-decoration-none" onclick="quickHelp('returns')">
+                <small>↩️ Return Policy</small>
+              </a>
+            </div>
+            <div class="col-md-3 mb-2">
+              <a href="#" class="text-decoration-none" onclick="quickHelp('sizes')">
+                <small>📏 Size Guide</small>
+              </a>
+            </div>
+            <div class="col-md-3 mb-2">
+              <a href="#" class="text-decoration-none" onclick="quickHelp('contact')">
+                <small>📞 Contact Us</small>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+let currentSupportType = '';
+
+function showSupportForm(type) {
+  currentSupportType = type;
+  const formSection = document.getElementById('support-form-section');
+  const orderInfoSection = document.getElementById('order-info-section');
+  const supportTypeText = document.getElementById('support-type-text');
+  const supportMessage = document.getElementById('support-message');
+  
+  // Set form title and placeholder based on type
+  switch(type) {
+    case 'order_tracking':
+      supportTypeText.textContent = 'Order Tracking';
+      supportMessage.placeholder = 'Please provide your order number and any specific questions about your order status...';
+      orderInfoSection.style.display = 'block';
+      break;
+    case 'returns':
+      supportTypeText.textContent = 'Returns & Refunds';
+      supportMessage.placeholder = 'Please describe what items you\'d like to return and the reason...';
+      orderInfoSection.style.display = 'block';
+      break;
+    case 'policy':
+      supportTypeText.textContent = 'General Help';
+      supportMessage.placeholder = 'Ask any questions about our policies, shipping, products, or general inquiries...';
+      orderInfoSection.style.display = 'none';
+      break;
+  }
+  
+  formSection.style.display = 'block';
+  supportMessage.focus();
+  
+  // Scroll to form
+  formSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+function hideSupportForm() {
+  document.getElementById('support-form-section').style.display = 'none';
+  document.getElementById('support-response-section').style.display = 'none';
+}
+
+async function submitSupportRequest() {
+  const submitBtn = document.querySelector('#support-form-section button[onclick="submitSupportRequest()"]');
+  const submitText = document.getElementById('submit-btn-text');
+  const submitLoading = document.getElementById('submit-loading');
+  const message = document.getElementById('support-message').value.trim();
+  
+  if (!message) {
+    alert('Please enter your question or describe your issue.');
+    return;
+  }
+  
+  // Show loading state
+  submitBtn.disabled = true;
+  submitText.textContent = 'Processing...';
+  submitLoading.style.display = 'inline-block';
+  
+  try {
+    const requestData = {
+      type: currentSupportType,
+      message: message
+    };
+    
+    // Add order info if applicable
+    if (currentSupportType === 'order_tracking' || currentSupportType === 'returns') {
+      const orderId = document.getElementById('order-id').value.trim();
+      const email = document.getElementById('customer-email').value.trim();
+      
+      if (orderId) requestData.order_id = orderId;
+      if (email) requestData.email = email;
+    }
+    
+    const response = await fetch('{{ $.baseUrl }}/api/customer-service', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestData)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    showSupportResponse(data);
+    
+  } catch (error) {
+    console.error('Support request failed:', error);
+    showErrorResponse('Unable to process your request. Please try again or contact support directly.');
+  } finally {
+    // Reset button state
+    submitBtn.disabled = false;
+    submitText.textContent = 'Get AI Assistance';
+    submitLoading.style.display = 'none';
+  }
+}
+
+function showSupportResponse(data) {
+  const responseSection = document.getElementById('support-response-section');
+  const responseContent = document.getElementById('support-response-content');
+  const escalationNotice = document.getElementById('escalation-notice');
+  const agentBadge = document.getElementById('agent-powered-badge');
+  
+  // Show response
+  responseContent.innerHTML = `<p class="mb-0">${escapeHtml(data.response || 'No response received.')}</p>`;
+  
+  // Show agent badge if AI-powered
+  if (data.agent_powered) {
+    agentBadge.style.display = 'inline-block';
+  }
+  
+  // Show escalation notice if needed
+  if (data.escalation_required) {
+    escalationNotice.style.display = 'block';
+  } else {
+    escalationNotice.style.display = 'none';
+  }
+  
+  responseSection.style.display = 'block';
+  responseSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+function showErrorResponse(message) {
+  const responseSection = document.getElementById('support-response-section');
+  const responseContent = document.getElementById('support-response-content');
+  const escalationNotice = document.getElementById('escalation-notice');
+  
+  responseContent.innerHTML = `<div class="alert alert-danger"><p class="mb-0">${escapeHtml(message)}</p></div>`;
+  escalationNotice.style.display = 'block';
+  
+  responseSection.style.display = 'block';
+  responseSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+function startNewRequest() {
+  // Reset form
+  document.getElementById('support-message').value = '';
+  document.getElementById('order-id').value = '';
+  document.getElementById('customer-email').value = '';
+  
+  // Hide response section
+  document.getElementById('support-response-section').style.display = 'none';
+  
+  // Show form
+  document.getElementById('support-form-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+function escalateToHuman() {
+  alert('Your request has been escalated to our human support team. You will receive an email update within 2 hours.');
+}
+
+function markResolved() {
+  alert('Thank you for your feedback! We\'re glad we could help.');
+  hideSupportForm();
+}
+
+async function quickHelp(topic) {
+  const quickQueries = {
+    'shipping': 'What are your shipping options and delivery times?',
+    'returns': 'What is your return policy?',
+    'sizes': 'How do I find the right size?',
+    'contact': 'How can I contact customer support?'
+  };
+  
+  if (quickQueries[topic]) {
+    // Set up quick query
+    currentSupportType = 'policy';
+    showSupportForm('policy');
+    document.getElementById('support-message').value = quickQueries[topic];
+    
+    // Auto-submit after a brief delay
+    setTimeout(() => {
+      submitSupportRequest();
+    }, 500);
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+</script>
+
+{{ template "footer" . }}
+{{ end }}

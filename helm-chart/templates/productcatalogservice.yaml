@@ -91,6 +91,24 @@ spec:
         {{- end }}
         - name: EXTRA_LATENCY
           value: {{ .Values.productCatalogService.extraLatency }}
+        # AlloyDB Configuration (use same database as agents-gateway)
+        - name: PROJECT_ID
+          value: {{ .Values.projectId | quote }}
+        - name: REGION
+          value: {{ .Values.region | quote }}
+        - name: ALLOYDB_CLUSTER_NAME
+          value: {{ .Values.productCatalogService.alloydb.clusterName | quote }}
+        - name: ALLOYDB_INSTANCE_NAME
+          value: {{ .Values.productCatalogService.alloydb.instanceName | quote }}
+        - name: ALLOYDB_DATABASE_NAME
+          value: {{ .Values.productCatalogService.alloydb.databaseName | quote }}
+        - name: ALLOYDB_TABLE_NAME
+          value: {{ .Values.productCatalogService.alloydb.tableName | quote }}
+        - name: ALLOYDB_SECRET_NAME
+          value: {{ .Values.productCatalogService.alloydb.secretName | quote }}
+            # Enable selective routing: homepage uses cache, cart/product details use database
+        - name: ENABLE_SELECTIVE_ROUTING
+          value: "true"
         readinessProbe:
           grpc:
             port: 3550

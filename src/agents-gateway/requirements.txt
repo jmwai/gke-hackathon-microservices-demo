@@ -1,0 +1,24 @@
+# Core web and agent frameworks
+fastapi
+google-adk==1.14.0
+
+# Google Cloud SDK for Vertex AI
+google-cloud-aiplatform
+
+# Database connector
+psycopg2-binary
+google-cloud-alloydb-connector[pg8000,psycopg2]
+
+# Configuration management
+pydantic
+pydantic-settings
+python-dotenv
+
+# ASGI Server
+uvicorn
+
+# HTTP client
+requests
+
+# Google Cloud Secret Manager
+google-cloud-secret-manager

@@ -96,10 +96,54 @@
                     </div>
 
                 </div>
+                
+                <!-- Smart Cart Recommendations Section -->
+                <div class="col-12 mt-4" id="smart-recommendations-section" style="display: none;">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-header bg-transparent d-flex align-items-center">
+                            <span class="mr-2">🤖</span>
+                            <h5 class="mb-0">AI Recommendations</h5>
+                            <small class="ml-auto text-muted">Based on your cart</small>
+                        </div>
+                        <div class="card-body">
+                            <div id="smart-recommendations-loading" class="text-center py-3">
+                                <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                    <span class="sr-only">Loading recommendations...</span>
+                                </div>
+                                <p class="mt-2 mb-0 text-muted">Finding perfect matches...</p>
+                            </div>
+                            <div id="smart-recommendations-content" style="display: none;">
+                                <p id="smart-recommendations-message" class="text-muted mb-3"></p>
+                                <div id="smart-recommendations-grid" class="row">
+                                    <!-- Recommendations will be populated here -->
+                                </div>
+                            </div>
+                            <div id="smart-recommendations-error" style="display: none;" class="text-center py-3">
+                                <p class="text-muted mb-0">Recommendations temporarily unavailable</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 <div class="col-lg-5 offset-lg-1 col-xl-4">
 
                     <form class="cart-checkout-form" action="{{ $.baseUrl }}/cart/checkout" method="POST">
+
+                        <!-- Checkout Assistance Section -->
+                        <div id="checkout-assistance-section" style="display: none;">
+                            <div class="alert alert-info border-0 shadow-sm mb-4">
+                                <div class="d-flex align-items-center">
+                                    <span class="mr-2">🤖</span>
+                                    <div class="flex-grow-1">
+                                        <h6 class="alert-heading mb-1">AI Checkout Assistant</h6>
+                                        <p id="checkout-guidance-text" class="mb-2 small">Loading personalized checkout guidance...</p>
+                                        <div id="checkout-suggestions" class="mb-0">
+                                            <!-- Suggestions will be populated here -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
 
                         <div class="row">
                             <div class="col">
@@ -228,6 +272,174 @@
     {{ if $.recommendations }}
         {{ template "recommendations" $ }}
     {{ end }}
+
+    <script>
+    // Smart Cart Recommendations and Checkout Assistance
+    document.addEventListener('DOMContentLoaded', function() {
+        loadSmartRecommendations();
+        loadCheckoutAssistance();
+    });
+    
+    async function loadSmartRecommendations() {
+        const recommendationsSection = document.getElementById('smart-recommendations-section');
+        const loadingDiv = document.getElementById('smart-recommendations-loading');
+        const contentDiv = document.getElementById('smart-recommendations-content');
+        const errorDiv = document.getElementById('smart-recommendations-error');
+        
+        try {
+            // Check if smart cart features are enabled
+            const flagsResponse = await fetch('{{ $.baseUrl }}/api/feature-flags');
+            const flags = await flagsResponse.json();
+            
+            if (!flags.cart_recommendations_enabled) {
+                return; // Don't show recommendations if disabled
+            }
+            
+            // Show the recommendations section
+            recommendationsSection.style.display = 'block';
+            
+            // Load recommendations
+            const response = await fetch('{{ $.baseUrl }}/api/cart/recommendations');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            // Hide loading, show content
+            loadingDiv.style.display = 'none';
+            
+            if (data.recommendations && data.recommendations.length > 0) {
+                displayRecommendations(data.recommendations, data.message);
+                contentDiv.style.display = 'block';
+            } else {
+                // Hide the entire section if no recommendations
+                recommendationsSection.style.display = 'none';
+            }
+            
+        } catch (error) {
+            console.error('Failed to load smart recommendations:', error);
+            loadingDiv.style.display = 'none';
+            errorDiv.style.display = 'block';
+        }
+    }
+    
+    function displayRecommendations(recommendations, message) {
+        const messageElement = document.getElementById('smart-recommendations-message');
+        const gridElement = document.getElementById('smart-recommendations-grid');
+        
+        if (message) {
+            messageElement.textContent = message;
+        }
+        
+        gridElement.innerHTML = '';
+        
+        recommendations.forEach(product => {
+            const productCard = createRecommendationCard(product);
+            gridElement.appendChild(productCard);
+        });
+    }
+    
+    function createRecommendationCard(product) {
+        const colDiv = document.createElement('div');
+        colDiv.className = 'col-md-6 col-lg-4 mb-3';
+        
+        colDiv.innerHTML = `
+            <div class="card h-100 border-0 shadow-sm recommendation-card">
+                <div class="recommendation-image-container">
+                    <img src="${product.picture || '/static/img/products/placeholder.jpg'}" 
+                         class="card-img-top recommendation-image" 
+                         alt="${product.name || 'Product'}"
+                         onerror="this.src='/static/img/products/placeholder.jpg'">
+                </div>
+                <div class="card-body d-flex flex-column">
+                    <h6 class="card-title">${escapeHtml(product.name || 'Unknown Product')}</h6>
+                    <p class="card-text text-muted small flex-grow-1">${escapeHtml(truncateText(product.description || '', 100))}</p>
+                    <a href="{{ $.baseUrl }}/product/${product.id}" 
+                       class="btn btn-outline-primary btn-sm mt-auto">
+                        View Product
+                    </a>
+                </div>
+            </div>
+        `;
+        
+        return colDiv;
+    }
+    
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    function truncateText(text, maxLength) {
+        if (text.length <= maxLength) return text;
+        return text.substring(0, maxLength) + '...';
+    }
+    
+    async function loadCheckoutAssistance() {
+        const assistanceSection = document.getElementById('checkout-assistance-section');
+        const guidanceText = document.getElementById('checkout-guidance-text');
+        const suggestionsDiv = document.getElementById('checkout-suggestions');
+        
+        try {
+            // Check if checkout assistance is enabled
+            const flagsResponse = await fetch('{{ $.baseUrl }}/api/feature-flags');
+            const flags = await flagsResponse.json();
+            
+            if (!flags.checkout_assistance_enabled) {
+                return; // Don't show assistance if disabled
+            }
+            
+            // Load checkout assistance
+            const response = await fetch('{{ $.baseUrl }}/api/checkout/assistance');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            // Show the assistance section
+            assistanceSection.style.display = 'block';
+            
+            // Update guidance text
+            if (data.guidance) {
+                guidanceText.textContent = data.guidance;
+            }
+            
+            // Display suggestions
+            if (data.suggestions && data.suggestions.length > 0) {
+                suggestionsDiv.innerHTML = '';
+                const suggestionsList = document.createElement('ul');
+                suggestionsList.className = 'list-unstyled mb-0';
+                
+                data.suggestions.forEach(suggestion => {
+                    const listItem = document.createElement('li');
+                    listItem.className = 'small text-muted mb-1';
+                    listItem.innerHTML = `<span class="mr-1">•</span>${escapeHtml(suggestion)}`;
+                    suggestionsList.appendChild(listItem);
+                });
+                
+                suggestionsDiv.appendChild(suggestionsList);
+            }
+            
+            // Add agent-powered indicator
+            if (data.agent_powered) {
+                const indicator = document.createElement('small');
+                indicator.className = 'badge badge-success';
+                indicator.textContent = 'AI-Powered';
+                guidanceText.parentNode.appendChild(indicator);
+            }
+            
+        } catch (error) {
+            console.error('Failed to load checkout assistance:', error);
+            // Show basic assistance even if agent fails
+            assistanceSection.style.display = 'block';
+            guidanceText.textContent = 'Please review your order details before proceeding with checkout.';
+            suggestionsDiv.innerHTML = '<small class="text-muted">• Verify shipping address<br>• Check payment information</small>';
+        }
+    }
+    </script>
 
     {{ template "footer" . }}
 {{ end }}
