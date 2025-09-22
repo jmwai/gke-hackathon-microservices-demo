@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from google.adk.agents import Agent
-from pydantic import BaseModel, Field, conlist
+from pydantic import BaseModel, Field
 from typing import List, Optional
 
 from .prompts import search as search_prompt
@@ -26,8 +26,8 @@ class RecommendationResult(BaseModel):
 class ShoppingAssistantOutput(BaseModel):
     action: Optional[str] = Field(description="Action taken", default="")
     summary: Optional[str] = Field(description="Summary message", default="")
-    recommendations: Optional[conlist(RecommendationResult, max_items=5)] = Field(  # type: ignore
-        description="Product recommendations (max 5)", default_factory=list
+    recommendations: Optional[List[RecommendationResult]] = Field(
+        description="Product recommendations (max 5)", default_factory=list, max_length=5
     )
     recommendation_summary: Optional[str] = Field(
         description="A summary of the search results.", default=""
